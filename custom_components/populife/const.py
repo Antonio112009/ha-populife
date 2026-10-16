@@ -14,7 +14,9 @@ CONF_UNLOCK_KEY: Final = "unlock_key"
 CONF_ADMIN_PASSWORD: Final = "admin_password"
 CONF_VERIFICATION_CODE: Final = "verification_code"
 CONF_BACK: Final = "back"
+CONF_FLAG_POS: Final = "flag_pos"
 CONF_GROUP_ID: Final = "group_id"
+CONF_LOCK_DATA: Final = "lock_data"
 CONF_ORG_ID: Final = "org_id"
 
 # Frame header defaults for V3 firmware when the key is entered by hand; the

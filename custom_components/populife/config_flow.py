@@ -17,7 +17,7 @@ from bleak.exc import BleakError
 import httpx
 import probatio
 from ttlock_ble import CloudError, LockVersion, TTLockClient, TTLockCloud, TTLockError, VirtualKey
-from ttlock_ble.crypto import decode_password, hex_key_to_bytes
+from ttlock_ble.crypto import hex_key_to_bytes
 
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
@@ -47,8 +47,10 @@ from .const import (
     CONF_ADMIN_PASSWORD,
     CONF_AES_KEY,
     CONF_BACK,
+    CONF_FLAG_POS,
     CONF_GROUP_ID,
     CONF_KEY,
+    CONF_LOCK_DATA,
     CONF_ORG_ID,
     CONF_UNLOCK_KEY,
     CONF_VERIFICATION_CODE,
@@ -58,6 +60,7 @@ from .const import (
     ERR_NEW_DEVICE_LOGIN,
 )
 from .coordinator import parse_advertisement
+from .lock_data import LockDataError, decode_secret, key_from_lock_data
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -85,6 +88,12 @@ CLOUD_SCHEMA = probatio.Schema(
         **_BACK_FIELD,
     }
 )
+APP_DATA_SCHEMA = probatio.Schema(
+    {
+        probatio.Optional(CONF_LOCK_DATA): TextSelector(TextSelectorConfig(multiline=True)),
+        **_BACK_FIELD,
+    }
+)
 VERIFY_SCHEMA = probatio.Schema({probatio.Optional(CONF_VERIFICATION_CODE): str, **_BACK_FIELD})
 MANUAL_SCHEMA = probatio.Schema(
     {
@@ -93,6 +102,7 @@ MANUAL_SCHEMA = probatio.Schema(
         probatio.Optional(CONF_ADMIN_PASSWORD): _PASSWORD_SELECTOR,
         probatio.Optional(CONF_GROUP_ID): _FRAME_ID_SELECTOR,
         probatio.Optional(CONF_ORG_ID): _FRAME_ID_SELECTOR,
+        probatio.Optional(CONF_FLAG_POS): _FRAME_ID_SELECTOR,
         **_BACK_FIELD,
     }
 )
@@ -101,22 +111,6 @@ MANUAL_SCHEMA = probatio.Schema(
 def _missing(user_input: Mapping[str, Any], *fields: str) -> dict[str, str]:
     """Return a `required` error for each of `fields` left empty."""
     return {field: "required" for field in fields if not str(user_input.get(field, "")).strip()}
-
-
-def _decode_secret(value: str) -> str | None:
-    """Return a numeric key from plain digits or the cloud's encoded form, else None.
-
-    The app's sync data carries `lockKey` and `adminPwd` encoded (base64 of a
-    comma-separated byte list); the lock expects the decoded digits.
-    """
-    value = value.strip()
-    if value.isdigit():
-        return value
-    try:
-        decoded = decode_password(value)
-    except ValueError:
-        return None
-    return decoded if decoded.isdigit() else None
 
 
 def _cloud_error_code(err: CloudError) -> int | None:
@@ -205,7 +199,9 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
             if parse_advertisement(info) is not None:
                 self._discovered[address] = info
         if not self._discovered:
-            return self.async_abort(reason="no_devices_found")
+            # Offer a rescan instead of a dead end: a sleeping safe only shows up once its
+            # keypad is touched.
+            return self.async_show_menu(step_id="no_devices", menu_options=["user"])
 
         return self.async_show_form(
             step_id="user",
@@ -220,6 +216,12 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
             ),
         )
+
+    async def async_step_no_devices(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show the "no safe found" menu; its only option scans again."""
+        return await self.async_step_user()
 
     async def async_step_method(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Ask how to obtain the safe's key."""
@@ -249,7 +251,7 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
             self._menu_step = step_id
         return self.async_show_menu(
             step_id=self._menu_step,
-            menu_options=["cloud", "manual"],
+            menu_options=["cloud", "app_data", "manual"],
             description_placeholders={"name": self._name},
         )
 
@@ -347,6 +349,37 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"name": self._name, "email": self._email},
         )
 
+    async def async_step_app_data(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Paste the lock data JSON copied from the vendor app's sync response."""
+        errors: dict[str, str] = {}
+        if user_input is not None and user_input.get(CONF_BACK):
+            return self._async_show_methods()
+        if user_input is not None and not (errors := _missing(user_input, CONF_LOCK_DATA)):
+            assert self._lock_version is not None
+            try:
+                key = key_from_lock_data(
+                    user_input[CONF_LOCK_DATA],
+                    address=self._address,
+                    fallback_version=self._lock_version,
+                    name=self._name,
+                )
+            except LockDataError as err:
+                errors["base"] = err.reason
+            else:
+                if (error := await self._async_check_key(key)) is None:
+                    return self._async_create(key)
+                errors["base"] = error
+
+        # Never echo the pasted secrets back into the form.
+        return self.async_show_form(
+            step_id="app_data",
+            data_schema=APP_DATA_SCHEMA,
+            errors=errors,
+            description_placeholders={"name": self._name},
+        )
+
     async def async_step_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Enter the AES key and unlock key by hand."""
         errors: dict[str, str] = {}
@@ -356,9 +389,9 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
             errors := _missing(user_input, CONF_AES_KEY, CONF_UNLOCK_KEY)
         ):
             aes_key = user_input[CONF_AES_KEY].strip()
-            unlock_key = _decode_secret(user_input[CONF_UNLOCK_KEY])
+            unlock_key = decode_secret(user_input[CONF_UNLOCK_KEY])
             admin_input = user_input.get(CONF_ADMIN_PASSWORD, "").strip()
-            admin_password = _decode_secret(admin_input) if admin_input else ""
+            admin_password = decode_secret(admin_input) if admin_input else ""
             try:
                 hex_key_to_bytes(aes_key)
             except ValueError:
@@ -376,7 +409,8 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
                     groupId=int(user_input.get(CONF_GROUP_ID, self._lock_version.groupId)),
                     orgId=int(user_input.get(CONF_ORG_ID, self._lock_version.orgId)),
                 )
-                key = self._manual_key(aes_key, unlock_key, admin_password)
+                flag_pos = int(user_input.get(CONF_FLAG_POS, 0))
+                key = self._manual_key(aes_key, unlock_key, admin_password, flag_pos)
                 if (error := await self._async_check_key(key)) is None:
                     return self._async_create(key)
                 errors["base"] = error
@@ -387,6 +421,7 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
         suggested = {
             CONF_GROUP_ID: self._lock_version.groupId,
             CONF_ORG_ID: self._lock_version.orgId,
+            CONF_FLAG_POS: 0,
             **(user_input or {}),
         }
         return self.async_show_form(
@@ -396,7 +431,9 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"name": self._name},
         )
 
-    def _manual_key(self, aes_key: str, unlock_key: str, admin_password: str) -> VirtualKey:
+    def _manual_key(
+        self, aes_key: str, unlock_key: str, admin_password: str, flag_pos: int
+    ) -> VirtualKey:
         """Build a key from hand-entered secrets and the safe's firmware ids."""
         assert self._lock_version is not None
         return VirtualKey(
@@ -408,7 +445,7 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
             lockVersion=self._lock_version,
             aesKeyStr=aes_key,
             unlockKey=unlock_key,
-            lockFlagPos=0,
+            lockFlagPos=flag_pos,
             timezoneRawOffSet=0,
             adminPs=admin_password,
         )

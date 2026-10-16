@@ -8,10 +8,18 @@
           "address": "Device"
         }
       },
+      "no_devices": {
+        "title": "No safe found",
+        "description": "Home Assistant can't hear a Populife safe right now. Touch the safe's keypad to wake it, make sure a Bluetooth adapter or ESPHome proxy is within a few metres, then scan again.",
+        "menu_options": {
+          "user": "Scan again"
+        }
+      },
       "method": {
         "description": "How should Home Assistant get the Bluetooth key for {name}?",
         "menu_options": {
           "cloud": "Import it from my TTLock-family account",
+          "app_data": "Paste the lock data copied from the app",
           "manual": "Enter the key manually"
         }
       },
@@ -20,6 +28,7 @@
         "description": "{name} rejected its Bluetooth key, for example because it was revoked or the safe was reset. How should Home Assistant get the new key?",
         "menu_options": {
           "cloud": "Import it from my TTLock-family account",
+          "app_data": "Paste the lock data copied from the app",
           "manual": "Enter the key manually"
         }
       },
@@ -28,6 +37,7 @@
         "description": "Replace the Bluetooth key Home Assistant uses for {name}, for example to add the admin password. How should Home Assistant get the new key?",
         "menu_options": {
           "cloud": "Import it from my TTLock-family account",
+          "app_data": "Paste the lock data copied from the app",
           "manual": "Enter the key manually"
         }
       },
@@ -54,6 +64,18 @@
           "back": "Turn this on and submit to go back to the method choice. The other fields are ignored."
         }
       },
+      "app_data": {
+        "title": "Paste lock data",
+        "description": "Paste the lock details JSON for {name} exactly as the Populife (or TTLock) app's sync response shows it, for example the response of its lock details request captured with a proxy app on your phone. Home Assistant reads the AES key, unlock key, admin password, flag position and firmware ids from it, and connects once to check the key. Touch the keypad before submitting.",
+        "data": {
+          "lock_data": "Lock data (JSON)",
+          "back": "Choose a different method instead"
+        },
+        "data_description": {
+          "lock_data": "The whole response, its data object, or a list of key records. It must contain this safe's MAC address.",
+          "back": "Turn this on and submit to go back to the method choice. The other fields are ignored."
+        }
+      },
       "manual": {
         "title": "Enter key",
         "description": "Enter the secrets for {name}. Touch the keypad before submitting so the safe is awake; Home Assistant connects once to check the key.",
@@ -63,6 +85,7 @@
           "admin_password": "Bluetooth admin password",
           "group_id": "Group ID",
           "org_id": "Org ID",
+          "flag_pos": "Flag position",
           "back": "Choose a different method instead"
         },
         "data_description": {
@@ -71,6 +94,7 @@
           "admin_password": "Optional. The adminPwd value (plain digits or encoded) from the app's sync data, not the keypad \"Admin code\" shown in the app. Leave it empty unless you have it.",
           "group_id": "The groupId value from the app's sync data. Keep 1 unless you know it.",
           "org_id": "The orgId value from the app's sync data. Keep 1 unless you know it.",
+          "flag_pos": "The flagPos value from the app's sync data. Needed with the admin password; keep 0 otherwise.",
           "back": "Turn this on and submit to go back to the method choice. The other fields are ignored."
         }
       }
@@ -83,7 +107,10 @@
       "invalid_aes_key": "Enter 16 bytes as hex.",
       "invalid_unlock_key": "Enter the unlock key as digits or as the encoded lockKey value.",
       "invalid_admin_password": "Enter the admin password as digits or as the encoded adminPwd value.",
-      "required": "This field is required."
+      "required": "This field is required.",
+      "invalid_json": "That isn't valid JSON. Paste the response exactly as the app sent it.",
+      "not_lock_data": "No lock key data found. Paste the response that contains aesKey (or aesKeyStr).",
+      "wrong_safe": "This data belongs to a different safe. Its MAC address doesn't match."
     },
     "abort": {
       "already_configured": "Device is already configured",

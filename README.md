@@ -130,9 +130,17 @@ extract it into `config/custom_components/populife/`, and restart Home Assistant
 2. Choose how to provide the key:
    - **Import from account.** Sign in once. Home Assistant downloads this safe's key and
      discards your password. On first use the cloud emails a verification code. This works
-     for accounts on the shared TTLock servers; some Populife-only accounts may be rejected.
-   - **Enter manually.** Paste the AES key (16 hex bytes) and the numeric unlock key.
-     Home Assistant connects once to check them before saving.
+     for accounts on the shared TTLock servers. Populife accounts live on Populife's own
+     servers and are rejected here, so use one of the next two options.
+   - **Paste lock data.** Paste the lock details JSON from the app's sync response, for
+     example as a proxy app on your phone shows it. Home Assistant reads the AES key, unlock
+     key, admin password, flag position and firmware ids (`groupId` / `orgId`) from it.
+   - **Enter manually.** Fill in the AES key (16 hex bytes) and the unlock key, either as
+     digits or as the encoded `lockKey`. Optionally add the admin password, flag position,
+     group ID and org ID.
+
+   Home Assistant connects to the safe once to check the key before saving. If the safe isn't
+   in range yet, setup offers **Scan again**.
 
 > [!IMPORTANT]
 > The **Admin code** shown in the Populife app is the keypad passcode, not the Bluetooth admin
@@ -165,7 +173,8 @@ logger:
 - [x] Cloud key import and manual key entry, reauth and reconfigure
 - [x] Admin settings: auto-lock delay, lock sound, clock sync
 - [x] Operation-log events
-- [ ] "Scan again" step in setup when no safe is in range yet
+- [x] "Scan again" in setup when no safe is in range yet
+- [x] Paste lock data copied from the app
 - [ ] Optional [Populife Open API](https://open.populife.co/doc/index_en.html) support:
       create one-time and time-limited PIN codes from automations, and import the unlock history
 - [ ] Confirmed-models list and device-specific quirks
