@@ -26,6 +26,8 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ruff check --output-format=github .
       - run: uv run mypy
+      - name: Dev pins match Home Assistant and manifest.json
+        run: uv run python scripts/check_ha_pins.py
 
   version:
     name: Version bump
