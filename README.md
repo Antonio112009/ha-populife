@@ -187,10 +187,30 @@ uv run pytest
 | Home Assistant | [hassfest](https://developers.home-assistant.io/blog/2020/04/16/hassfest/) |
 | HACS | [hacs/action](https://github.com/hacs/action) |
 | Security | CodeQL |
-| Releases | [release-please](https://github.com/googleapis/release-please) with conventional commits |
+| Version bump | PRs that change the integration must raise the manifest version |
 
-Merging the release PR that release-please opens publishes a GitHub release with the
-`populife.zip` that HACS installs.
+### Trunk-based workflow
+
+```mermaid
+flowchart LR
+    branch["feature branch<br/>feat/… · fix/…"] -- "pull request" --> checks{"CI · hassfest · HACS<br/>CodeQL · version bump"}
+    checks -- "squash merge" --> main["main (protected)"]
+    main -- "new version?" --> release["GitHub release<br/>+ populife.zip"]
+    release --> hacs["HACS update<br/>in Home Assistant"]
+```
+
+1. Branch off `main`, make the change and open a pull request. Direct pushes to `main` are
+   blocked.
+2. If the PR changes `custom_components/` or `hacs.json`, bump the version (semver):
+
+   ```bash
+   uv run python scripts/bump_version.py patch   # or minor / major / X.Y.Z
+   ```
+
+   In VS Code: **Terminal → Run Task → Bump version**. In Claude Code: `/bump-version`.
+3. Once every check is green, squash-merge. The release workflow publishes `vX.Y.Z` with
+   `populife.zip`, and HACS offers it as an update. Merges that keep the version (docs, CI,
+   dev dependencies) publish nothing.
 
 ## Credits
 
