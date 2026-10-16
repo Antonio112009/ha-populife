@@ -32,6 +32,7 @@ SERVICE_ADD_PASSCODE: Final = "add_passcode"
 SERVICE_DELETE_PASSCODE: Final = "delete_passcode"
 SERVICE_CLEAR_PASSCODES: Final = "clear_passcodes"
 SERVICE_LIST_PASSCODES: Final = "list_passcodes"
+SERVICE_LIST_FINGERPRINTS: Final = "list_fingerprints"
 
 # The keypad accepts 4 to 9 digits.
 _CODE = cv.matches_regex(r"^\d{4,9}$")
@@ -65,6 +66,12 @@ async def async_setup_entry(
         SERVICE_LIST_PASSCODES,
         None,
         "async_list_passcodes",
+        supports_response=SupportsResponse.ONLY,
+    )
+    platform.async_register_entity_service(
+        SERVICE_LIST_FINGERPRINTS,
+        None,
+        "async_list_fingerprints",
         supports_response=SupportsResponse.ONLY,
     )
 
@@ -122,3 +129,8 @@ class PopulifeLock(PopulifeEntity, LockEntity):
         """Return the keypad passcodes the safe reports."""
         passcodes = await self.coordinator.async_list_passcodes()
         return {"passcodes": cast("list[JsonValueType]", passcodes)}
+
+    async def async_list_fingerprints(self) -> ServiceResponse:
+        """Return the enrolled fingerprints: slot and validity."""
+        fingerprints = await self.coordinator.async_list_fingerprints()
+        return {"fingerprints": cast("list[JsonValueType]", fingerprints)}

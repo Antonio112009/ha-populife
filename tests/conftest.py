@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+import datetime as dt
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-from ttlock_ble import AutoLockLimits, DeviceInfo, LockSound
+from ttlock_ble import (
+    AutoLockLimits,
+    DeviceFeatures,
+    DeviceInfo,
+    DeviceProperties,
+    LockFeature,
+    LockSound,
+)
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from custom_components.populife.const import DOMAIN
 
@@ -79,6 +88,24 @@ def _mock_client() -> MagicMock:
     client.delete_passcode = AsyncMock()
     client.clear_passcodes = AsyncMock()
     client.get_passcodes = AsyncMock(return_value=[])
+    client.get_lock_time = AsyncMock(side_effect=lambda: dt_util.now().replace(tzinfo=None))
+    client.get_device_features = AsyncMock(
+        return_value=DeviceFeatures(
+            mask=(1 << LockFeature.PASSCODE) | (1 << LockFeature.AUTO_LOCK), battery=100
+        )
+    )
+    client.get_device_properties = AsyncMock(
+        return_value=DeviceProperties(
+            model_variant="SN8534-4P",
+            hardware_revision="1.3",
+            firmware_version="7.2.20.251111",
+            manufacture_date="20250312",
+            mac_address=ADDRESS,
+            clock_time=dt.datetime(2026, 10, 16, 18, 0),  # noqa: DTZ001 - lock-local time
+        )
+    )
+    client.get_fingerprints = AsyncMock(return_value=[])
+    client.set_lock_volume = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
     return client

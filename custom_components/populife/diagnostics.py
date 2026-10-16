@@ -25,4 +25,7 @@ async def async_get_config_entry_diagnostics(
         "entry": async_redact_data(dict(entry.data), TO_REDACT),
         "available": coordinator.available,
         "state": asdict(coordinator.state),
+        # What the safe reports about itself: supported features, properties (model
+        # variant, manufacture date, clock) and fingerprint slots. No secrets.
+        "details": asdict(coordinator.details),
     }

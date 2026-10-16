@@ -10,7 +10,7 @@ afterwards to free the adapter or ESPHome proxy slot.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 from time import monotonic
 from typing import TYPE_CHECKING, Any, override
@@ -22,6 +22,7 @@ from ttlock_ble import (
     LockAdvertisement,
     LockEvent,
     LockState,
+    LockVolume,
     TTLockClient,
     TTLockError,
 )
@@ -54,7 +55,14 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
     import datetime as dt
 
-    from ttlock_ble import DeviceInfo, LogEntry, PasscodeEntry, VirtualKey
+    from ttlock_ble import (
+        DeviceInfo,
+        DeviceProperties,
+        FingerprintEntry,
+        LogEntry,
+        PasscodeEntry,
+        VirtualKey,
+    )
 
     from homeassistant.config_entries import ConfigEntry
 
@@ -81,9 +89,23 @@ class PopulifeState:
     auto_lock_seconds: int | None = None
     auto_lock_limits: AutoLockLimits | None = None
     lock_sound: bool | None = None
+    lock_volume: LockVolume | None = None
+    # Seconds the safe's clock is ahead of Home Assistant (negative: behind).
+    clock_drift: float | None = None
+    fingerprint_count: int | None = None
+    passcode_count: int | None = None
     # From the operation log.
     last_unlock: dt.datetime | None = None
     last_unlock_method: str | None = None
+
+
+@dataclass(slots=True)
+class PopulifeDetails:
+    """What the safe reports about itself, for diagnostics (admin reads)."""
+
+    features: list[str] | None = None
+    properties: DeviceProperties | None = None
+    fingerprints: list[dict[str, Any]] = field(default_factory=list)
 
 
 def parse_advertisement(
@@ -113,13 +135,26 @@ def _passcode_time(value: dt.datetime) -> str:
     return dt_util.as_local(value).strftime(_PASSCODE_TIME_FORMAT)
 
 
+def _local_iso(value: dt.datetime | None) -> str | None:
+    """Return a lock-local naive time as an ISO string in Home Assistant's zone."""
+    return value.replace(tzinfo=dt_util.get_default_time_zone()).isoformat() if value else None
+
+
+def _fingerprint_dict(entry: FingerprintEntry) -> dict[str, Any]:
+    # The template id stays out: it identifies the finger, and listing needs only the slot.
+    return {
+        "slot": entry.slot,
+        "start": _local_iso(entry.start_date),
+        "end": _local_iso(entry.end_date),
+    }
+
+
 def _passcode_dict(entry: PasscodeEntry) -> dict[str, Any]:
-    zone = dt_util.get_default_time_zone()
     return {
         "passcode": entry.passcode,
         "type": entry.pwd_type.name.lower(),
-        "start": entry.start_date.replace(tzinfo=zone).isoformat() if entry.start_date else None,
-        "end": entry.end_date.replace(tzinfo=zone).isoformat() if entry.end_date else None,
+        "start": _local_iso(entry.start_date),
+        "end": _local_iso(entry.end_date),
     }
 
 
@@ -150,6 +185,7 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         # the cloud `userType`. Without it the library refuses before connecting.
         self.has_admin = key.adminPs.isdigit()
         self.state = PopulifeState()
+        self.details = PopulifeDetails()
         self._client: TTLockClient | None = None
         self._command_lock = asyncio.Lock()
         self._cancel_disconnect: CALLBACK_TYPE | None = None
@@ -318,31 +354,45 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         return result
 
     async def _async_refresh(self) -> None:
-        """Read state and device info once after startup, then settings and new log records."""
-
-        async def read(
-            client: TTLockClient,
-        ) -> tuple[tuple[LockState | None, int | None], DeviceInfo]:
-            return await client.query_state(), await client.get_device_info()
-
+        """Read everything once after startup; retry on a timer if the safe can't be reached."""
         try:
-            (lock_state, battery), info = await self.async_run(read)
+            await self.async_refresh_all()
         except HomeAssistantError as err:
             _LOGGER.debug("%s: refresh failed, will retry: %s", self.address, err)
             self._cancel_refresh_retry = async_call_later(
                 self.hass, REFRESH_RETRY_SECONDS, self._async_retry_refresh
             )
-            return
         finally:
             self._refresh_running = False
+
+    async def async_refresh_all(self) -> None:
+        """Read state, device info and clock, then admin data and new log records.
+
+        Raises `HomeAssistantError` when the safe can't be reached; the admin
+        reads and the log only log their failures.
+        """
+
+        async def read(
+            client: TTLockClient,
+        ) -> tuple[tuple[LockState | None, int | None], DeviceInfo, dt.datetime]:
+            return (
+                await client.query_state(),
+                await client.get_device_info(),
+                await client.get_lock_time(),
+            )
+
+        (lock_state, battery), info, lock_time = await self.async_run(read)
         self._refreshed = True
         if lock_state is not None:
             self.state.lock_state = lock_state
         if battery is not None:
             self._async_set_battery(battery)
+        self.state.clock_drift = round(
+            (lock_time - dt_util.now().replace(tzinfo=None)).total_seconds(), 1
+        )
         self._async_update_device(info)
         self.async_update_listeners()
-        if self.has_admin and not self._settings_loaded:
+        if self.has_admin:
             self._settings_loaded = True
             await self._async_load_settings()
         await self.async_sync_log()
@@ -380,9 +430,16 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self.async_update_listeners()
 
     async def async_refresh_lock_sound(self) -> None:
-        """Read whether the safe beeps."""
+        """Read whether the safe beeps, and how loud on hardware with a speaker."""
         sound = await self.async_run(lambda client: client.get_lock_sound())
         self.state.lock_sound = sound.enabled
+        self.state.lock_volume = sound.volume
+        self.async_update_listeners()
+
+    async def async_set_lock_volume(self, volume: LockVolume) -> None:
+        """Set the beep volume."""
+        await self.async_run(lambda client: client.set_lock_volume(volume))
+        self.state.lock_volume = volume
         self.async_update_listeners()
 
     async def async_set_lock_sound(self, *, enabled: bool) -> None:
@@ -393,15 +450,50 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
 
     async def async_sync_time(self) -> float:
         """Set the safe's clock to Home Assistant's local time; return the drift it had."""
-        return await self.async_run(lambda client: client.sync_time(local_time=dt_util.now()))
+        drift = await self.async_run(lambda client: client.sync_time(local_time=dt_util.now()))
+        self.state.clock_drift = 0.0
+        self.async_update_listeners()
+        return drift
 
     async def _async_load_settings(self) -> None:
-        """Read the admin settings once, so the settings entities show a value."""
-        for refresh in (self.async_refresh_auto_lock, self.async_refresh_lock_sound):
+        """Read the admin settings and what the safe reports about itself."""
+        for refresh in (
+            self.async_refresh_auto_lock,
+            self.async_refresh_lock_sound,
+            self._async_refresh_features,
+            self._async_refresh_properties,
+            self._async_refresh_fingerprints,
+            self._async_refresh_passcode_count,
+        ):
             try:
                 await refresh()
             except HomeAssistantError as err:
-                _LOGGER.debug("%s: could not read settings: %s", self.address, err)
+                _LOGGER.debug("%s: could not read %s: %s", self.address, refresh.__name__, err)
+
+    async def _async_refresh_features(self) -> None:
+        features = await self.async_run(lambda client: client.get_device_features())
+        self.details.features = [feature.name.lower() for feature in features.known]
+
+    async def _async_refresh_properties(self) -> None:
+        properties = await self.async_run(lambda client: client.get_device_properties())
+        self.details.properties = properties
+        registry = dr.async_get(self.hass)
+        device = registry.async_get_device_by_connection(
+            (dr.CONNECTION_BLUETOOTH, self.address), self.config_entry.entry_id
+        )
+        if device is not None and properties.model_variant:
+            registry.async_update_device(device.id, model_id=properties.model_variant)
+
+    async def _async_refresh_fingerprints(self) -> None:
+        entries = await self.async_run(lambda client: client.get_fingerprints())
+        self.details.fingerprints = [_fingerprint_dict(entry) for entry in entries]
+        self.state.fingerprint_count = len(entries)
+        self.async_update_listeners()
+
+    async def _async_refresh_passcode_count(self) -> None:
+        entries = await self.async_run(lambda client: client.get_passcodes())
+        self.state.passcode_count = len(entries)
+        self.async_update_listeners()
 
     # Operation log
 
@@ -514,7 +606,15 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         """Return the keypad passcodes the safe reports."""
         self._require_admin()
         entries = await self.async_run(lambda client: client.get_passcodes())
+        self.state.passcode_count = len(entries)
+        self.async_update_listeners()
         return [_passcode_dict(entry) for entry in entries]
+
+    async def async_list_fingerprints(self) -> list[dict[str, Any]]:
+        """Return the enrolled fingerprints: slot and validity."""
+        self._require_admin()
+        await self._async_refresh_fingerprints()
+        return self.details.fingerprints
 
     # Connection
 

@@ -1,4 +1,4 @@
-"""Clock sync button for a Populife safe (admin keys only)."""
+"""Buttons for a Populife safe: refresh everything, and sync the clock (admin keys)."""
 
 from __future__ import annotations
 
@@ -27,9 +27,24 @@ async def async_setup_entry(
     entry: PopulifeConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the clock sync button when the key can change settings."""
-    if entry.runtime_data.has_admin:
-        async_add_entities([PopulifeSyncTimeButton(entry.runtime_data, "sync_time")])
+    """Set up the refresh button, and the clock sync button when the key can change settings."""
+    coordinator = entry.runtime_data
+    buttons: list[ButtonEntity] = [PopulifeRefreshButton(coordinator, "refresh")]
+    if coordinator.has_admin:
+        buttons.append(PopulifeSyncTimeButton(coordinator, "sync_time"))
+    async_add_entities(buttons)
+
+
+class PopulifeRefreshButton(PopulifeEntity, ButtonEntity):
+    """Read everything the safe reports again: state, device info, clock, settings, log."""
+
+    _attr_translation_key = "refresh"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @override
+    async def async_press(self) -> None:
+        """Connect and read everything."""
+        await self.coordinator.async_refresh_all()
 
 
 class PopulifeSyncTimeButton(PopulifeEntity, ButtonEntity):

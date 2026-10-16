@@ -124,6 +124,9 @@
     "button": {
       "sync_time": {
         "name": "Sync clock"
+      },
+      "refresh": {
+        "name": "Refresh"
       }
     },
     "event": {
@@ -192,6 +195,27 @@
           "gateway": "Gateway",
           "remote": "Remote or wireless keypad"
         }
+      },
+      "clock_drift": {
+        "name": "Clock drift"
+      },
+      "fingerprints": {
+        "name": "Fingerprints"
+      },
+      "passcodes": {
+        "name": "Passcodes"
+      }
+    },
+    "select": {
+      "lock_volume": {
+        "name": "Lock volume",
+        "state": {
+          "low": "Low",
+          "medium_low": "Medium low",
+          "medium": "Medium",
+          "medium_high": "Medium high",
+          "high": "High"
+        }
       }
     }
   },
@@ -257,6 +281,10 @@
     "list_passcodes": {
       "name": "List passcodes",
       "description": "Returns the keypad passcodes the safe reports. Codes created in the app may only appear after they have been used once. Needs an admin key."
+    },
+    "list_fingerprints": {
+      "name": "List fingerprints",
+      "description": "Returns the enrolled fingerprints with their slot and validity period. Needs an admin key."
     }
   }
 }
