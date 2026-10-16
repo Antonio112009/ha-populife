@@ -1,0 +1,58 @@
+{
+  "entity": {
+    "button": {
+      "sync_time": {
+        "default": "mdi:clock-check-outline"
+      }
+    },
+    "event": {
+      "operation": {
+        "default": "mdi:history"
+      }
+    },
+    "number": {
+      "auto_lock_delay": {
+        "default": "mdi:timer-lock-outline"
+      }
+    },
+    "sensor": {
+      "last_unlock": {
+        "default": "mdi:lock-open-variant-outline"
+      },
+      "last_unlock_method": {
+        "default": "mdi:account-key-outline",
+        "state": {
+          "app": "mdi:cellphone-key",
+          "keypad": "mdi:dialpad",
+          "fingerprint": "mdi:fingerprint",
+          "card": "mdi:card-account-details-outline",
+          "key": "mdi:key-variant",
+          "gateway": "mdi:router-wireless",
+          "remote": "mdi:remote"
+        }
+      }
+    },
+    "switch": {
+      "lock_sound": {
+        "default": "mdi:volume-high",
+        "state": {
+          "off": "mdi:volume-off"
+        }
+      }
+    }
+  },
+  "services": {
+    "add_passcode": {
+      "service": "mdi:dialpad"
+    },
+    "delete_passcode": {
+      "service": "mdi:backspace-outline"
+    },
+    "clear_passcodes": {
+      "service": "mdi:delete-sweep-outline"
+    },
+    "list_passcodes": {
+      "service": "mdi:format-list-numbered"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+add_passcode:
+  target:
+    entity:
+      integration: populife
+      domain: lock
+  fields:
+    code:
+      required: true
+      example: "482916"
+      selector:
+        text:
+    start:
+      selector:
+        datetime:
+    end:
+      selector:
+        datetime:
+
+delete_passcode:
+  target:
+    entity:
+      integration: populife
+      domain: lock
+  fields:
+    code:
+      required: true
+      example: "482916"
+      selector:
+        text:
+
+clear_passcodes:
+  target:
+    entity:
+      integration: populife
+      domain: lock
+
+list_passcodes:
+  target:
+    entity:
+      integration: populife
+      domain: lock
