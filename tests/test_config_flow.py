@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +10,7 @@ import httpx
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from ttlock_ble import CloudError, TTLockError
+from ttlock_ble.crypto import _DECODE_TABLE, decode_password
 
 from homeassistant.config_entries import SOURCE_BLUETOOTH, SOURCE_USER
 from homeassistant.const import CONF_ADDRESS, CONF_EMAIL, CONF_PASSWORD
@@ -18,6 +20,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from custom_components.populife.const import (
     CONF_ADMIN_PASSWORD,
     CONF_AES_KEY,
+    CONF_BACK,
     CONF_KEY,
     CONF_UNLOCK_KEY,
     CONF_VERIFICATION_CODE,
@@ -388,3 +391,105 @@ async def test_reconfigure_manual(
     assert result["reason"] == "reconfigure_successful"
     assert config_entry.data[CONF_KEY]["adminPs"] == "246810"
     mock_flow_client.query_state.assert_awaited_once()
+
+
+def _cloud_encode(secret: str, xor_const: int = 0x5A) -> str:
+    """Encode `secret` the way the cloud sync encodes lockKey / adminPwd."""
+    payload = [byte ^ xor_const for byte in secret.encode("ascii")]
+    payload.append(_DECODE_TABLE[len(payload) % 256] ^ xor_const)
+    return base64.b64encode(",".join(map(str, payload)).encode("ascii")).decode("ascii")
+
+
+@pytest.mark.parametrize("step", ["cloud", "manual"])
+async def test_back_to_method_menu(
+    hass: HomeAssistant, mock_flow_client: MagicMock, step: str
+) -> None:
+    """Every key form can return to the method menu to pick the other way."""
+    flow_id = await _open_step(hass, step)
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_BACK: True})
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "method"
+
+    other = "cloud" if step == "manual" else "manual"
+    result = await hass.config_entries.flow.async_configure(flow_id, {"next_step_id": other})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == other
+
+
+async def test_back_from_verification(hass: HomeAssistant, mock_cloud: MagicMock) -> None:
+    """The verification-code form can also go back to the menu."""
+    flow_id = await _open_step(hass, "cloud")
+    mock_cloud.login.side_effect = CloudError({"errorCode": -1014})
+    result = await hass.config_entries.flow.async_configure(flow_id, CLOUD_INPUT)
+    assert result["step_id"] == "cloud_verify"
+
+    result = await hass.config_entries.flow.async_configure(flow_id, {})
+    assert result["errors"] == {CONF_VERIFICATION_CODE: "required"}
+
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_BACK: True})
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "method"
+
+
+async def test_back_returns_to_reconfigure_menu(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    """Going back during reconfigure shows the reconfigure menu, not the setup one."""
+    result = await config_entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "manual"}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_BACK: True})
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "reconfigure"
+
+
+@pytest.mark.parametrize(
+    ("step", "expected"),
+    [
+        ("cloud", {CONF_EMAIL: "required", CONF_PASSWORD: "required"}),
+        ("manual", {CONF_AES_KEY: "required", CONF_UNLOCK_KEY: "required"}),
+    ],
+)
+async def test_empty_form_needs_fields(
+    hass: HomeAssistant,
+    mock_cloud: MagicMock,
+    mock_flow_client: MagicMock,
+    step: str,
+    expected: dict[str, str],
+) -> None:
+    """Submitting a form empty, without going back, asks for its fields."""
+    flow_id = await _open_step(hass, step)
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_BACK: False})
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == expected
+    mock_cloud.login.assert_not_awaited()
+    mock_flow_client.query_state.assert_not_awaited()
+
+
+async def test_manual_accepts_encoded_cloud_values(
+    hass: HomeAssistant, mock_flow_client: MagicMock
+) -> None:
+    """lockKey and adminPwd can be pasted as the app's sync data encodes them."""
+    lock_key, admin_pwd = _cloud_encode("1234567890"), _cloud_encode("11223344")
+    assert decode_password(lock_key) == "1234567890"
+
+    flow_id = await _open_step(hass, "manual")
+    result = await hass.config_entries.flow.async_configure(
+        flow_id,
+        {**MANUAL_INPUT, CONF_UNLOCK_KEY: lock_key, CONF_ADMIN_PASSWORD: admin_pwd},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_KEY]["unlockKey"] == "1234567890"
+    assert result["data"][CONF_KEY]["adminPs"] == "11223344"
+
+
+async def test_manual_rejects_undecodable_value(
+    hass: HomeAssistant, mock_flow_client: MagicMock
+) -> None:
+    """A long value that is neither digits nor a valid encoding is rejected."""
+    flow_id = await _open_step(hass, "manual")
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {**MANUAL_INPUT, CONF_UNLOCK_KEY: "not-base64-at-all!"}
+    )
+    assert result["errors"] == {CONF_UNLOCK_KEY: "invalid_unlock_key"}
