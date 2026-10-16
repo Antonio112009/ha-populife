@@ -38,6 +38,15 @@ uv run ruff format . && uv run ruff check . && uv run mypy && uv run pytest
 
 hassfest (needs Docker): `docker run --rm -v "$PWD":/github/workspace ghcr.io/home-assistant/hassfest`
 
+## Dependencies
+
+- Home Assistant pins its own libraries (the Bluetooth stack, `serialx`, …). The dev group in
+  `pyproject.toml` must use exactly those versions; `scripts/check_ha_pins.py` (run in CI) fails
+  otherwise. Dependabot ignores those packages: update them together with
+  `pytest-homeassistant-custom-component`, to the versions the new Home Assistant pins.
+- `ttlock-ble` is pinned in both `pyproject.toml` and `manifest.json` `requirements` (what users
+  get installed); the same check requires them to match. Changing the manifest needs a version bump.
+
 ## Conventions
 
 - Python 3.14 and Home Assistant 2026.10+. Flow schemas use `probatio`, not `voluptuous`.
