@@ -27,6 +27,28 @@ jobs:
       - run: uv run ruff check --output-format=github .
       - run: uv run mypy
 
+  version:
+    name: Version bump
+    # Every PR that changes what users install must raise the version, because merging
+    # it into main publishes that version as a release.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Require a newer version when the integration changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if git diff --quiet "origin/$BASE_REF...HEAD" -- custom_components hacs.json; then
+            echo "The integration is unchanged, so no version bump is needed."
+            exit 0
+          fi
+          base=$(git show "origin/$BASE_REF:custom_components/populife/manifest.json" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')
+          python3 scripts/bump_version.py --check "$base"
+
   test:
     name: Tests
     runs-on: ubuntu-latest

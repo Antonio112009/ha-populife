@@ -1,6 +1,6 @@
 [project]
 name = "ha-populife"
-version = "0.1.0"
+version = "0.0.0"  # unused: the release version lives in custom_components/populife/manifest.json
 description = "Home Assistant custom integration for Populife (TTLock-based) Bluetooth smart safes"
 readme = "README.md"
 license = "MIT"
@@ -55,6 +55,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "custom_components/populife/const.py" = ["S105"]  # CONF_* names, not secrets
+"scripts/**" = ["INP001"]  # standalone scripts, not a package
 "tests/**" = ["PLR0913", "PLR2004", "SLF001", "D", "ANN", "TC"]
 
 [tool.ruff.lint.isort]

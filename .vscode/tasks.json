@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Bump version",
+      "detail": "Raise the version in manifest.json (required for PRs that change the integration)",
+      "type": "shell",
+      "command": "uv run python scripts/bump_version.py ${input:bumpPart}",
+      "problemMatcher": []
+    },
+    {
+      "label": "Check version bump against main",
+      "detail": "The same check CI runs on pull requests",
+      "type": "shell",
+      "command": "git fetch -q origin main && uv run python scripts/bump_version.py --check \"$(git show origin/main:custom_components/populife/manifest.json | python3 -c 'import json,sys;print(json.load(sys.stdin)[\"version\"])')\"",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run all checks",
+      "detail": "ruff, mypy and pytest, as in CI",
+      "type": "shell",
+      "command": "uv run ruff format --check . && uv run ruff check . && uv run mypy && uv run pytest",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "bumpPart",
+      "type": "pickString",
+      "description": "Which part of the version to raise?",
+      "options": [
+        { "label": "patch: bug fix", "value": "patch" },
+        { "label": "minor: new feature", "value": "minor" },
+        { "label": "major: breaking change", "value": "major" }
+      ],
+      "default": "patch"
+    }
+  ]
+}

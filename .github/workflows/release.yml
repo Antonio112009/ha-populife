@@ -1,5 +1,9 @@
 name: Release
 
+# Trunk-based: every merge into main that carries a new manifest version is published as a
+# GitHub release with the populife.zip HACS installs. Merges that keep the version (docs,
+# CI, dev dependencies) publish nothing.
+
 on:
   push:
     branches: [main]
@@ -7,35 +11,50 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  release-please:
-    name: Release Please
-    runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    steps:
-      - uses: googleapis/release-please-action@v5
-        id: release
-        with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
-  publish:
-    name: Attach HACS zip
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+  release:
+    name: Publish release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("custom_components/populife/manifest.json"))["version"])')
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this version is already released
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG is already released; nothing to publish."
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build populife.zip
+        if: steps.existing.outputs.released == 'false'
         working-directory: custom_components/populife
         run: zip -r "$GITHUB_WORKSPACE/populife.zip" . -x '__pycache__/*'
-      - uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: populife.zip
+
+      - name: Publish release
+        if: steps.existing.outputs.released == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" populife.zip \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes \
+            --latest
