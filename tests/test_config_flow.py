@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import base64
 from collections.abc import Generator
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from ttlock_ble import CloudError, TTLockError
-from ttlock_ble.crypto import _DECODE_TABLE, decode_password
+from ttlock_ble.crypto import decode_password
 
 from homeassistant.config_entries import SOURCE_BLUETOOTH, SOURCE_USER
 from homeassistant.const import CONF_ADDRESS, CONF_EMAIL, CONF_PASSWORD
@@ -22,15 +22,17 @@ from custom_components.populife.const import (
     CONF_ADMIN_PASSWORD,
     CONF_AES_KEY,
     CONF_BACK,
+    CONF_FLAG_POS,
     CONF_GROUP_ID,
     CONF_KEY,
+    CONF_LOCK_DATA,
     CONF_ORG_ID,
     CONF_UNLOCK_KEY,
     CONF_VERIFICATION_CODE,
     DOMAIN,
 )
 
-from . import ADDRESS, inject, make_key, service_info
+from . import ADDRESS, cloud_encode, inject, make_key, service_info
 
 CLOUD_INPUT = {CONF_EMAIL: "me@example.com", CONF_PASSWORD: "hunter2"}
 MANUAL_INPUT = {
@@ -93,11 +95,24 @@ async def test_bluetooth_already_configured(
     assert result["reason"] == "already_configured"
 
 
-async def test_user_no_devices(hass: HomeAssistant) -> None:
-    """The user step aborts when no safe is in range."""
+async def test_user_no_devices_then_scan_again(hass: HomeAssistant) -> None:
+    """With no safe in range the user can scan again once it has been woken up."""
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_devices_found"
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "no_devices"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "user"}
+    )
+    assert result["step_id"] == "no_devices"
+
+    inject(hass, service_info())
+    await hass.async_block_till_done()
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "user"}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
 
 
 async def test_user_picks_device(hass: HomeAssistant, mock_flow_client: MagicMock) -> None:
@@ -396,14 +411,7 @@ async def test_reconfigure_manual(
     mock_flow_client.query_state.assert_awaited_once()
 
 
-def _cloud_encode(secret: str, xor_const: int = 0x5A) -> str:
-    """Encode `secret` the way the cloud sync encodes lockKey / adminPwd."""
-    payload = [byte ^ xor_const for byte in secret.encode("ascii")]
-    payload.append(_DECODE_TABLE[len(payload) % 256] ^ xor_const)
-    return base64.b64encode(",".join(map(str, payload)).encode("ascii")).decode("ascii")
-
-
-@pytest.mark.parametrize("step", ["cloud", "manual"])
+@pytest.mark.parametrize("step", ["cloud", "app_data", "manual"])
 async def test_back_to_method_menu(
     hass: HomeAssistant, mock_flow_client: MagicMock, step: str
 ) -> None:
@@ -413,7 +421,7 @@ async def test_back_to_method_menu(
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "method"
 
-    other = "cloud" if step == "manual" else "manual"
+    other = "cloud" if step != "cloud" else "manual"
     result = await hass.config_entries.flow.async_configure(flow_id, {"next_step_id": other})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == other
@@ -474,7 +482,7 @@ async def test_manual_accepts_encoded_cloud_values(
     hass: HomeAssistant, mock_flow_client: MagicMock
 ) -> None:
     """lockKey and adminPwd can be pasted as the app's sync data encodes them."""
-    lock_key, admin_pwd = _cloud_encode("1234567890"), _cloud_encode("11223344")
+    lock_key, admin_pwd = cloud_encode("1234567890"), cloud_encode("11223344")
     assert decode_password(lock_key) == "1234567890"
 
     flow_id = await _open_step(hass, "manual")
@@ -535,3 +543,84 @@ async def test_reauth_prefills_entry_frame_ids(
     )
     assert _suggested(result, CONF_GROUP_ID) == 15
     assert _suggested(result, CONF_ORG_ID) == 2
+
+
+def _app_response(**overrides: object) -> str:
+    """Return a lock details response shaped like the Populife app's."""
+    data = {
+        "lockId": 12345678,
+        "name": "S8534_549605",
+        "alias": "Office safe",
+        "mac": ADDRESS,
+        "key": cloud_encode("123456789"),
+        "flagPos": 3,
+        "aesKey": "00,11,22,33,44,55,66,77,88,99,aa,bb,cc,dd,ee,ff",
+        "adminPwd": cloud_encode("987654321"),
+        "keyId": 555,
+        "protocolType": 5,
+        "protocolVersion": 3,
+        "scene": 2,
+        "groupId": 15,
+        "orgId": 2,
+        "isAdmin": True,
+    } | overrides
+    return json.dumps({"success": True, "code": 200, "msg": None, "data": data})
+
+
+async def test_app_data_success(hass: HomeAssistant, mock_flow_client: MagicMock) -> None:
+    """Pasting the app's lock data sets every key field at once."""
+    flow_id = await _open_step(hass, "app_data")
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {CONF_LOCK_DATA: _app_response()}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Office safe"
+    key = result["data"][CONF_KEY]
+    assert key["unlockKey"] == "123456789"
+    assert key["adminPs"] == "987654321"
+    assert key["lockFlagPos"] == 3
+    assert (key["lockVersion"]["groupId"], key["lockVersion"]["orgId"]) == (15, 2)
+    mock_flow_client.query_state.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ("{not json", "invalid_json"),
+        ('{"success": true, "data": {"name": "x"}}', "not_lock_data"),
+        (_app_response(mac="11:22:33:44:55:66"), "wrong_safe"),
+    ],
+)
+async def test_app_data_errors(
+    hass: HomeAssistant, mock_flow_client: MagicMock, text: str, error: str
+) -> None:
+    """Unusable pasted data is reported and the safe is not contacted."""
+    flow_id = await _open_step(hass, "app_data")
+    result = await hass.config_entries.flow.async_configure(flow_id, {CONF_LOCK_DATA: text})
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": error}
+    mock_flow_client.query_state.assert_not_awaited()
+
+
+async def test_app_data_empty_and_unreachable(
+    hass: HomeAssistant, mock_flow_client: MagicMock
+) -> None:
+    """An empty form asks for the data; a safe that doesn't answer is a connection error."""
+    flow_id = await _open_step(hass, "app_data")
+    result = await hass.config_entries.flow.async_configure(flow_id, {})
+    assert result["errors"] == {CONF_LOCK_DATA: "required"}
+
+    mock_flow_client.query_state.side_effect = TTLockError("asleep")
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {CONF_LOCK_DATA: _app_response()}
+    )
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_manual_flag_position(hass: HomeAssistant, mock_flow_client: MagicMock) -> None:
+    """The manual form stores the flag position used by the admin handshake."""
+    flow_id = await _open_step(hass, "manual")
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {**MANUAL_INPUT, CONF_FLAG_POS: 3.0}
+    )
+    assert result["data"][CONF_KEY]["lockFlagPos"] == 3

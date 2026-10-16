@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import time
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 from ttlock_ble import LockVersion, VirtualKey
+from ttlock_ble.crypto import _DECODE_TABLE
 
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
@@ -99,3 +101,10 @@ def make_key(*, admin: bool = False, address: str = ADDRESS) -> VirtualKey:
 
 
 ENTRY_DATA = {CONF_ADDRESS: ADDRESS, CONF_KEY: make_key(admin=True).to_dict()}
+
+
+def cloud_encode(secret: str, xor_const: int = 0x5A) -> str:
+    """Encode `secret` the way the cloud sync encodes lockKey / adminPwd."""
+    payload = [byte ^ xor_const for byte in secret.encode("ascii")]
+    payload.append(_DECODE_TABLE[len(payload) % 256] ^ xor_const)
+    return base64.b64encode(",".join(map(str, payload)).encode("ascii")).decode("ascii")
