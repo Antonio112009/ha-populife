@@ -16,7 +16,7 @@ from bleak.exc import BleakError
 import httpx
 import probatio
 from ttlock_ble import CloudError, LockVersion, TTLockClient, TTLockCloud, TTLockError, VirtualKey
-from ttlock_ble.crypto import hex_key_to_bytes
+from ttlock_ble.crypto import decode_password, hex_key_to_bytes
 
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
@@ -32,11 +32,17 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_ADDRESS, CONF_EMAIL, CONF_PASSWORD
 from homeassistant.helpers.httpx_client import get_async_client
-from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
+from homeassistant.helpers.selector import (
+    BooleanSelector,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .const import (
     CONF_ADMIN_PASSWORD,
     CONF_AES_KEY,
+    CONF_BACK,
     CONF_KEY,
     CONF_UNLOCK_KEY,
     CONF_VERIFICATION_CODE,
@@ -57,20 +63,48 @@ _LOGGER = logging.getLogger(__name__)
 _EMAIL_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.EMAIL))
 _PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 
+# Home Assistant flows have no back button, so every form ends with a toggle that returns
+# to the method menu. That is also why the fields are optional in the schema: a user going
+# back must be able to submit an empty form. `_missing` enforces them otherwise.
+_BACK_FIELD = {probatio.Optional(CONF_BACK, default=False): BooleanSelector()}
+
 CLOUD_SCHEMA = probatio.Schema(
     {
-        probatio.Required(CONF_EMAIL): _EMAIL_SELECTOR,
-        probatio.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
+        probatio.Optional(CONF_EMAIL): _EMAIL_SELECTOR,
+        probatio.Optional(CONF_PASSWORD): _PASSWORD_SELECTOR,
+        **_BACK_FIELD,
     }
 )
-VERIFY_SCHEMA = probatio.Schema({probatio.Required(CONF_VERIFICATION_CODE): str})
+VERIFY_SCHEMA = probatio.Schema({probatio.Optional(CONF_VERIFICATION_CODE): str, **_BACK_FIELD})
 MANUAL_SCHEMA = probatio.Schema(
     {
-        probatio.Required(CONF_AES_KEY): _PASSWORD_SELECTOR,
-        probatio.Required(CONF_UNLOCK_KEY): _PASSWORD_SELECTOR,
+        probatio.Optional(CONF_AES_KEY): _PASSWORD_SELECTOR,
+        probatio.Optional(CONF_UNLOCK_KEY): _PASSWORD_SELECTOR,
         probatio.Optional(CONF_ADMIN_PASSWORD): _PASSWORD_SELECTOR,
+        **_BACK_FIELD,
     }
 )
+
+
+def _missing(user_input: Mapping[str, Any], *fields: str) -> dict[str, str]:
+    """Return a `required` error for each of `fields` left empty."""
+    return {field: "required" for field in fields if not str(user_input.get(field, "")).strip()}
+
+
+def _decode_secret(value: str) -> str | None:
+    """Return a numeric key from plain digits or the cloud's encoded form, else None.
+
+    The app's sync data carries `lockKey` and `adminPwd` encoded (base64 of a
+    comma-separated byte list); the lock expects the decoded digits.
+    """
+    value = value.strip()
+    if value.isdigit():
+        return value
+    try:
+        decoded = decode_password(value)
+    except ValueError:
+        return None
+    return decoded if decoded.isdigit() else None
 
 
 def _cloud_error_code(err: CloudError) -> int | None:
@@ -96,6 +130,7 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
         self._cloud: TTLockCloud | None = None
         self._email = ""
         self._password = ""
+        self._menu_step = "method"
 
     @property
     def _address(self) -> str:
@@ -176,11 +211,7 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_method(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Ask how to obtain the safe's key."""
-        return self.async_show_menu(
-            step_id="method",
-            menu_options=["cloud", "manual"],
-            description_placeholders={"name": self._name},
-        )
+        return self._async_show_methods("method")
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
         """Start replacing a key the safe rejected."""
@@ -191,19 +222,21 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Ask how to obtain the new key."""
-        return self.async_show_menu(
-            step_id="reauth_confirm",
-            menu_options=["cloud", "manual"],
-            description_placeholders={"name": self._name},
-        )
+        return self._async_show_methods("reauth_confirm")
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Replace the key of a working entry, for example to add the admin password."""
         await self._async_use_entry(self._get_reconfigure_entry())
+        return self._async_show_methods("reconfigure")
+
+    def _async_show_methods(self, step_id: str | None = None) -> ConfigFlowResult:
+        """Show the key-method menu; with no `step_id`, the one the user came from."""
+        if step_id is not None:
+            self._menu_step = step_id
         return self.async_show_menu(
-            step_id="reconfigure",
+            step_id=self._menu_step,
             menu_options=["cloud", "manual"],
             description_placeholders={"name": self._name},
         )
@@ -211,8 +244,12 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_cloud(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Import the key from a TTLock-family cloud account."""
         errors: dict[str, str] = {}
-        if user_input is not None:
-            self._email = user_input[CONF_EMAIL]
+        if user_input is not None and user_input.get(CONF_BACK):
+            return self._async_show_methods()
+        if user_input is not None and not (
+            errors := _missing(user_input, CONF_EMAIL, CONF_PASSWORD)
+        ):
+            self._email = user_input[CONF_EMAIL].strip()
             self._password = user_input[CONF_PASSWORD]
             cloud = self._cloud = TTLockCloud(client=get_async_client(self.hass))
             try:
@@ -248,7 +285,9 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Confirm this Home Assistant install with the code the cloud sent."""
         errors: dict[str, str] = {}
-        if user_input is not None:
+        if user_input is not None and user_input.get(CONF_BACK):
+            return self._async_show_methods()
+        if user_input is not None and not (errors := _missing(user_input, CONF_VERIFICATION_CODE)):
             assert self._cloud is not None
             try:
                 await self._cloud.validate_new_device(
@@ -299,19 +338,26 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Enter the AES key and unlock key by hand."""
         errors: dict[str, str] = {}
-        if user_input is not None:
+        if user_input is not None and user_input.get(CONF_BACK):
+            return self._async_show_methods()
+        if user_input is not None and not (
+            errors := _missing(user_input, CONF_AES_KEY, CONF_UNLOCK_KEY)
+        ):
             aes_key = user_input[CONF_AES_KEY].strip()
-            unlock_key = user_input[CONF_UNLOCK_KEY].strip()
-            admin_password = user_input.get(CONF_ADMIN_PASSWORD, "").strip()
+            unlock_key = _decode_secret(user_input[CONF_UNLOCK_KEY])
+            admin_input = user_input.get(CONF_ADMIN_PASSWORD, "").strip()
+            admin_password = _decode_secret(admin_input) if admin_input else ""
             try:
                 hex_key_to_bytes(aes_key)
             except ValueError:
                 errors[CONF_AES_KEY] = "invalid_aes_key"
-            if not unlock_key.isdigit():
+            if unlock_key is None:
                 errors[CONF_UNLOCK_KEY] = "invalid_unlock_key"
-            if admin_password and not admin_password.isdigit():
+            if admin_password is None:
                 errors[CONF_ADMIN_PASSWORD] = "invalid_admin_password"
             if not errors:
+                assert unlock_key is not None
+                assert admin_password is not None
                 key = self._manual_key(aes_key, unlock_key, admin_password)
                 if (error := await self._async_check_key(key)) is None:
                     return self._async_create(key)

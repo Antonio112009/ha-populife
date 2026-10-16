@@ -36,14 +36,22 @@
         "description": "Sign in with the account the safe is paired to. Home Assistant downloads the key for {name} once and does not store your password; every command afterwards runs locally over Bluetooth.",
         "data": {
           "email": "Email",
-          "password": "Password"
+          "password": "Password",
+          "back": "Choose a different method instead"
+        },
+        "data_description": {
+          "back": "Turn this on and submit to go back to the method choice. The other fields are ignored."
         }
       },
       "cloud_verify": {
         "title": "Confirm new device",
         "description": "The cloud sent a verification code to {email}. Enter it to allow this Home Assistant install.",
         "data": {
-          "verification_code": "Verification code"
+          "verification_code": "Verification code",
+          "back": "Choose a different method instead"
+        },
+        "data_description": {
+          "back": "Turn this on and submit to go back to the method choice. The other fields are ignored."
         }
       },
       "manual": {
@@ -52,12 +60,14 @@
         "data": {
           "aes_key": "AES key",
           "unlock_key": "Unlock key",
-          "admin_password": "Bluetooth admin password"
+          "admin_password": "Bluetooth admin password",
+          "back": "Choose a different method instead"
         },
         "data_description": {
           "aes_key": "16 bytes as hex, either continuous (32 characters) or comma separated.",
-          "unlock_key": "The decoded numeric unlock key.",
-          "admin_password": "Optional. This is the hidden Bluetooth admin secret, not the keypad \"Admin code\" shown in the app. Leave it empty unless you have it."
+          "unlock_key": "The numeric unlock key, or the encoded lockKey value exactly as the app's sync data shows it.",
+          "admin_password": "Optional. The adminPwd value (plain digits or encoded) from the app's sync data, not the keypad \"Admin code\" shown in the app. Leave it empty unless you have it.",
+          "back": "Turn this on and submit to go back to the method choice. The other fields are ignored."
         }
       }
     },
@@ -67,8 +77,9 @@
       "invalid_code": "The verification code was not accepted.",
       "lock_not_in_account": "This safe is not in that account. Pair it in the app first, or enter the key manually.",
       "invalid_aes_key": "Enter 16 bytes as hex.",
-      "invalid_unlock_key": "The unlock key must contain only digits.",
-      "invalid_admin_password": "The admin password must contain only digits."
+      "invalid_unlock_key": "Enter the unlock key as digits or as the encoded lockKey value.",
+      "invalid_admin_password": "Enter the admin password as digits or as the encoded adminPwd value.",
+      "required": "This field is required."
     },
     "abort": {
       "already_configured": "Device is already configured",

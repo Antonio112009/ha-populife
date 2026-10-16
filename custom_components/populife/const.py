@@ -13,6 +13,7 @@ CONF_AES_KEY: Final = "aes_key"
 CONF_UNLOCK_KEY: Final = "unlock_key"
 CONF_ADMIN_PASSWORD: Final = "admin_password"
 CONF_VERIFICATION_CODE: Final = "verification_code"
+CONF_BACK: Final = "back"
 
 # Frame header defaults for V3 firmware when the key is entered by hand; the
 # cloud supplies the real values when keys are imported from an account.
