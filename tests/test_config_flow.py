@@ -17,11 +17,14 @@ from homeassistant.const import CONF_ADDRESS, CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
+from custom_components.populife import config_flow
 from custom_components.populife.const import (
     CONF_ADMIN_PASSWORD,
     CONF_AES_KEY,
     CONF_BACK,
+    CONF_GROUP_ID,
     CONF_KEY,
+    CONF_ORG_ID,
     CONF_UNLOCK_KEY,
     CONF_VERIFICATION_CODE,
     DOMAIN,
@@ -493,3 +496,42 @@ async def test_manual_rejects_undecodable_value(
         flow_id, {**MANUAL_INPUT, CONF_UNLOCK_KEY: "not-base64-at-all!"}
     )
     assert result["errors"] == {CONF_UNLOCK_KEY: "invalid_unlock_key"}
+
+
+def _suggested(result: dict, field: str) -> object:
+    """Return the value a form prefills for `field`."""
+    key = next(key for key in result["data_schema"].schema if key == field)
+    return (key.description or {}).get("suggested_value")
+
+
+async def test_manual_frame_ids(hass: HomeAssistant, mock_flow_client: MagicMock) -> None:
+    """Group and org ids default to 1 and can be set from the app's sync data."""
+    flow_id = await _start_from_bluetooth(hass)
+    form = await hass.config_entries.flow.async_configure(flow_id, {"next_step_id": "manual"})
+    assert _suggested(form, CONF_GROUP_ID) == 1
+    assert _suggested(form, CONF_ORG_ID) == 1
+
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {**MANUAL_INPUT, CONF_GROUP_ID: 15.0, CONF_ORG_ID: 2.0}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    stored = result["data"][CONF_KEY]["lockVersion"]
+    assert (stored["groupId"], stored["orgId"]) == (15, 2)
+    # The one-time key check already talks to the safe with the entered ids.
+    checked = config_flow.TTLockClient.from_ble_device.call_args.args[1]
+    assert (checked.lockVersion.groupId, checked.lockVersion.orgId) == (15, 2)
+
+
+async def test_reauth_prefills_entry_frame_ids(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    """During reauth the manual form starts from the entry's own group and org ids."""
+    lock_version = {"protocolType": 5, "protocolVersion": 3, "scene": 2, "groupId": 15, "orgId": 2}
+    key = {**config_entry.data[CONF_KEY], "lockVersion": lock_version}
+    hass.config_entries.async_update_entry(config_entry, data={**config_entry.data, CONF_KEY: key})
+    result = await config_entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "manual"}
+    )
+    assert _suggested(result, CONF_GROUP_ID) == 15
+    assert _suggested(result, CONF_ORG_ID) == 2

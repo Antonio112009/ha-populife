@@ -61,12 +61,16 @@
           "aes_key": "AES key",
           "unlock_key": "Unlock key",
           "admin_password": "Bluetooth admin password",
+          "group_id": "Group ID",
+          "org_id": "Org ID",
           "back": "Choose a different method instead"
         },
         "data_description": {
           "aes_key": "16 bytes as hex, either continuous (32 characters) or comma separated.",
           "unlock_key": "The numeric unlock key, or the encoded lockKey value exactly as the app's sync data shows it.",
           "admin_password": "Optional. The adminPwd value (plain digits or encoded) from the app's sync data, not the keypad \"Admin code\" shown in the app. Leave it empty unless you have it.",
+          "group_id": "The groupId value from the app's sync data. Keep 1 unless you know it.",
+          "org_id": "The orgId value from the app's sync data. Keep 1 unless you know it.",
           "back": "Turn this on and submit to go back to the method choice. The other fields are ignored."
         }
       }
