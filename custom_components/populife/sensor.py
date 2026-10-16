@@ -45,6 +45,7 @@ class PopulifeSensorEntityDescription(SensorEntityDescription):
     restore_fn: Callable[[PopulifeState, object], None] | None = None
     # Read with the admin handshake, so only created for admin keys.
     admin_only: bool = False
+    attributes_fn: Callable[[PopulifeCoordinator], dict[str, object]] | None = None
 
 
 def _restore_last_unlock(state: PopulifeState, value: object) -> None:
@@ -55,6 +56,11 @@ def _restore_last_unlock(state: PopulifeState, value: object) -> None:
 def _restore_last_unlock_method(state: PopulifeState, value: object) -> None:
     if state.last_unlock_method is None and isinstance(value, str):
         state.last_unlock_method = value
+
+
+def _restore_last_unlock_user(state: PopulifeState, value: object) -> None:
+    if state.last_unlock_user is None and isinstance(value, str):
+        state.last_unlock_user = value
 
 
 SENSORS: tuple[PopulifeSensorEntityDescription, ...] = (
@@ -91,6 +97,13 @@ SENSORS: tuple[PopulifeSensorEntityDescription, ...] = (
         restore_fn=_restore_last_unlock_method,
     ),
     PopulifeSensorEntityDescription(
+        key="last_unlock_user",
+        translation_key="last_unlock_user",
+        value_fn=lambda state: state.last_unlock_user,
+        restore_fn=_restore_last_unlock_user,
+        admin_only=True,
+    ),
+    PopulifeSensorEntityDescription(
         key="clock_drift",
         translation_key="clock_drift",
         device_class=SensorDeviceClass.DURATION,
@@ -114,6 +127,7 @@ SENSORS: tuple[PopulifeSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda state: state.passcode_count,
         admin_only=True,
+        attributes_fn=lambda coordinator: {"passcodes": coordinator.passcode_overview()},
     ),
 )
 
@@ -136,6 +150,8 @@ class PopulifeSensor(PopulifeEntity, RestoreSensor):
     """A value read from the safe's advertisements or its operation log."""
 
     entity_description: PopulifeSensorEntityDescription
+    # The passcode list holds the codes themselves: show it, but keep it out of the history.
+    _unrecorded_attributes = frozenset({"passcodes"})
 
     def __init__(
         self,
@@ -160,3 +176,11 @@ class PopulifeSensor(PopulifeEntity, RestoreSensor):
     def native_value(self) -> SensorValue:
         """Return the sensor value."""
         return self.entity_description.value_fn(self.coordinator.state)
+
+    @property
+    @override
+    def extra_state_attributes(self) -> dict[str, object] | None:
+        """Return the passcode list on the passcodes sensor."""
+        if (attributes_fn := self.entity_description.attributes_fn) is None:
+            return None
+        return attributes_fn(self.coordinator)

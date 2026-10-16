@@ -114,11 +114,44 @@ password) you also get:
 
 These settings are read right after startup, or on demand with `homeassistant.update_entity`.
 
-### Keypad passcodes (admin key)
+### Passcode console (admin key)
+
+The device page gets a small form for keypad passcodes, so codes can be managed from
+anywhere without YAML (Home Assistant needs a Bluetooth radio near the safe):
+
+| Entity | What it's for |
+| --- | --- |
+| **Passcode name** | Who a permanent code belongs to, or what a temporary one is for |
+| **Passcode** / **Generate passcode** | Type 4–9 digits, or generate 6 that clash with no other code |
+| **Passcode type** | Permanent or Temporary |
+| **Passcode valid from** / **valid until** | The window of a temporary code (defaults: the next 24 hours) |
+| **Add passcode** | Writes it to the safe and shows a notification with the name, code and window |
+| **Passcode to delete** / **Delete passcode** | Pick a code by name and remove it |
+| `sensor.<safe>_passcodes` | Count; its `passcodes` attribute lists name, code, type and window (kept out of the history) |
+| `sensor.<safe>_last_unlocked_by` | The name of the keypad code that last opened the safe |
+
+The safe stores only the digits, so **names are kept by Home Assistant**. Openings with a
+named code show up as "unlocked by <name>"; the code itself never reaches events or history.
+Before writing a temporary code, Home Assistant syncs the safe's clock, which decides when the
+code starts and stops working. Codes that start with another code (`1234` and `12345`) are
+refused, because the keypad would accept the shorter one.
+
+Codes added through Home Assistant live on the safe, not in the vendor cloud, so the
+Populife app doesn't list them. Fingerprints can't be added remotely: the sensor has to scan
+the finger.
+
+#### Ready-made admin dashboard
+
+[`dashboards/safe-admin.yaml`](dashboards/safe-admin.yaml) lays it all out: the safe, the
+new-passcode form (the window only shows for temporary codes), a table of codes by name, and
+a week of activity. Replace `SAFE` with your lock's entity ID prefix, create a dashboard with
+**Admin only** turned on, and paste the file into its raw configuration editor.
+
+### Keypad passcode actions (admin key)
 
 | Action | What it does |
 | --- | --- |
-| `populife.add_passcode` | Add a 4–9 digit code: permanent, or valid between `start` and `end`. |
+| `populife.add_passcode` | Add a 4–9 digit code: permanent, or valid between `start` and `end`; optional `name`. |
 | `populife.delete_passcode` | Remove a code. |
 | `populife.clear_passcodes` | Remove **every** code, including ones made in the app. There's no undo. |
 | `populife.list_passcodes` | Return the codes the safe reports (response data). |
@@ -131,6 +164,7 @@ target:
   entity_id: lock.office_safe
 data:
   code: "482916"
+  name: "Guest, this weekend"
   start: "2026-11-07 09:00:00"
   end: "2026-11-08 20:00:00"
 ```
@@ -221,6 +255,7 @@ logger:
 - [x] Operation log import with last-unlock sensors, even for openings while offline
 - [x] State, device info and settings read after startup
 - [x] Low-battery repair issue
+- [x] Passcode console with names, temporary windows, "unlocked by" and an admin dashboard
 - [x] Metrics read from the safe: clock drift, fingerprint and passcode counts, features and
       properties, volume, refresh button
 - [ ] Optional [Populife Open API](https://open.populife.co/doc/index_en.html) support:

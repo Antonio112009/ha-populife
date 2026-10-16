@@ -11,7 +11,14 @@ from pytest_homeassistant_custom_component.components.diagnostics import (
     get_diagnostics_for_config_entry,
 )
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
-from ttlock_ble import FingerprintEntry, LockSound, LockVolume, TTLockError
+from ttlock_ble import (
+    FingerprintEntry,
+    KeyboardPwdType,
+    LockSound,
+    LockVolume,
+    PasscodeEntry,
+    TTLockError,
+)
 
 from homeassistant.components.button import DOMAIN as BUTTON_DOMAIN, SERVICE_PRESS
 from homeassistant.components.select import (
@@ -71,7 +78,9 @@ async def test_refresh_reads_metrics(
         dt_util.now().replace(tzinfo=None) + dt.timedelta(seconds=30)
     )
     mock_client.get_fingerprints.return_value = [_fingerprint(1), _fingerprint(2)]
-    mock_client.get_passcodes.return_value = [MagicMock()] * 3
+    mock_client.get_passcodes.return_value = [
+        PasscodeEntry(f"{n}1357", KeyboardPwdType.PERMANENT, None, None, None) for n in range(3)
+    ]
     await _setup(hass, config_entry)
     await _refresh(hass)
 
@@ -108,7 +117,9 @@ async def test_admin_read_failure_keeps_the_rest(
 ) -> None:
     """One admin read failing doesn't stop the others."""
     mock_client.get_device_features.side_effect = TTLockError("not supported")
-    mock_client.get_passcodes.return_value = [MagicMock()]
+    mock_client.get_passcodes.return_value = [
+        PasscodeEntry("482916", KeyboardPwdType.PERMANENT, None, None, None)
+    ]
     await _setup(hass, config_entry)
     await _refresh(hass)
     assert config_entry.runtime_data.details.features is None

@@ -1,4 +1,8 @@
-"""Buttons for a Populife safe: refresh everything, and sync the clock (admin keys)."""
+"""Buttons for a Populife safe.
+
+Refresh reads everything again. With an admin key there are also the clock sync and the
+passcode console's actions: generate a code, add the passcode, delete the picked one.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-    from .coordinator import PopulifeConfigEntry
+    from .coordinator import PopulifeConfigEntry, PopulifeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,7 +35,12 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     buttons: list[ButtonEntity] = [PopulifeRefreshButton(coordinator, "refresh")]
     if coordinator.has_admin:
-        buttons.append(PopulifeSyncTimeButton(coordinator, "sync_time"))
+        buttons += [
+            PopulifeSyncTimeButton(coordinator, "sync_time"),
+            PopulifeConsoleButton(coordinator, "passcode_generate"),
+            PopulifeConsoleButton(coordinator, "passcode_add"),
+            PopulifeConsoleButton(coordinator, "passcode_delete_selected"),
+        ]
     async_add_entities(buttons)
 
 
@@ -58,3 +67,25 @@ class PopulifeSyncTimeButton(PopulifeEntity, ButtonEntity):
         """Sync the clock to Home Assistant's local time."""
         drift = await self.coordinator.async_sync_time()
         _LOGGER.debug("%s: clock was off by %+.1f s", self.coordinator.address, drift)
+
+
+class PopulifeConsoleButton(PopulifeEntity, ButtonEntity):
+    """A passcode console action: generate a code, add the passcode, delete the picked one."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: PopulifeCoordinator, key: str) -> None:
+        """Initialize the button; `key` picks the action."""
+        super().__init__(coordinator, key)
+        self._attr_translation_key = self._action = key
+
+    @override
+    async def async_press(self) -> None:
+        """Run the action."""
+        match self._action:
+            case "passcode_generate":
+                self.coordinator.async_generate_code()
+            case "passcode_add":
+                await self.coordinator.async_add_draft()
+            case _:
+                await self.coordinator.async_delete_draft()

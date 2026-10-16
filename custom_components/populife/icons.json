@@ -6,6 +6,15 @@
       },
       "refresh": {
         "default": "mdi:refresh"
+      },
+      "passcode_generate": {
+        "default": "mdi:dice-multiple"
+      },
+      "passcode_add": {
+        "default": "mdi:plus-circle-outline"
+      },
+      "passcode_delete_selected": {
+        "default": "mdi:delete-outline"
       }
     },
     "event": {
@@ -42,6 +51,9 @@
       },
       "passcodes": {
         "default": "mdi:dialpad"
+      },
+      "last_unlock_user": {
+        "default": "mdi:account-key"
       }
     },
     "switch": {
@@ -59,6 +71,31 @@
           "low": "mdi:volume-low",
           "high": "mdi:volume-high"
         }
+      },
+      "passcode_type": {
+        "default": "mdi:timer-sand",
+        "state": {
+          "permanent": "mdi:infinity"
+        }
+      },
+      "passcode_delete": {
+        "default": "mdi:account-remove-outline"
+      }
+    },
+    "text": {
+      "passcode_name": {
+        "default": "mdi:account-tag-outline"
+      },
+      "passcode_code": {
+        "default": "mdi:dialpad"
+      }
+    },
+    "datetime": {
+      "passcode_start": {
+        "default": "mdi:calendar-start"
+      },
+      "passcode_end": {
+        "default": "mdi:calendar-end"
       }
     }
   },

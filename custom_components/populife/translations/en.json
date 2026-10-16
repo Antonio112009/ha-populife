@@ -127,6 +127,15 @@
       },
       "refresh": {
         "name": "Refresh"
+      },
+      "passcode_generate": {
+        "name": "Generate passcode"
+      },
+      "passcode_add": {
+        "name": "Add passcode"
+      },
+      "passcode_delete_selected": {
+        "name": "Delete passcode"
       }
     },
     "event": {
@@ -166,6 +175,9 @@
           },
           "credential": {
             "name": "Fingerprint or card ID"
+          },
+          "user": {
+            "name": "User"
           }
         }
       }
@@ -204,6 +216,9 @@
       },
       "passcodes": {
         "name": "Passcodes"
+      },
+      "last_unlock_user": {
+        "name": "Last unlocked by"
       }
     },
     "select": {
@@ -216,6 +231,32 @@
           "medium_high": "Medium high",
           "high": "High"
         }
+      },
+      "passcode_type": {
+        "name": "Passcode type",
+        "state": {
+          "permanent": "Permanent",
+          "timed": "Temporary"
+        }
+      },
+      "passcode_delete": {
+        "name": "Passcode to delete"
+      }
+    },
+    "text": {
+      "passcode_name": {
+        "name": "Passcode name"
+      },
+      "passcode_code": {
+        "name": "Passcode"
+      }
+    },
+    "datetime": {
+      "passcode_start": {
+        "name": "Passcode valid from"
+      },
+      "passcode_end": {
+        "name": "Passcode valid until"
       }
     }
   },
@@ -236,7 +277,16 @@
       "message": "Managing keypad passcodes needs an admin key. Use Reconfigure to add the safe's Bluetooth admin password."
     },
     "passcode_period_invalid": {
-      "message": "The passcode's end must be later than its start."
+      "message": "A temporary passcode needs a \"valid until\" later than its \"valid from\"."
+    },
+    "passcode_invalid": {
+      "message": "A passcode has 4 to 9 digits."
+    },
+    "passcode_conflict": {
+      "message": "{code} clashes with another passcode: one starts with the other, so the keypad would accept the shorter one. Pick another code."
+    },
+    "passcode_missing": {
+      "message": "Fill in the passcode first, or press Generate passcode."
     }
   },
   "issues": {
@@ -261,6 +311,10 @@
         "end": {
           "name": "End",
           "description": "When the passcode stops working. Leave empty for a permanent passcode."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Who the code belongs to, or what a temporary code is for. Home Assistant keeps the name; the safe stores only the digits."
         }
       }
     },
