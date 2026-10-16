@@ -2,8 +2,9 @@
 
 State arrives passively: the firmware folds bolt position and battery into
 every advertisement, so Home Assistant tracks the safe without holding a
-connection. A connection is only opened for commands (lock / unlock) and is
-dropped shortly afterwards to free the adapter or ESPHome proxy slot.
+connection. A connection is only opened for commands (lock / unlock, and the
+admin settings) and is dropped shortly afterwards to free the adapter or
+ESPHome proxy slot.
 """
 
 from __future__ import annotations
@@ -14,7 +15,14 @@ import logging
 from typing import TYPE_CHECKING, override
 
 from bleak.exc import BleakError
-from ttlock_ble import LockAdvertisement, LockEvent, LockState, TTLockClient, TTLockError
+from ttlock_ble import (
+    AutoLockLimits,
+    LockAdvertisement,
+    LockEvent,
+    LockState,
+    TTLockClient,
+    TTLockError,
+)
 
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.passive_update_coordinator import (
@@ -23,8 +31,9 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
+from homeassistant.util import dt as dt_util
 
-from .const import DISCONNECT_DELAY_SECONDS, DOMAIN, KEEP_ALIVE_SECONDS
+from .const import DISCONNECT_DELAY_SECONDS, DOMAIN, KEEP_ALIVE_SECONDS, KEY_REJECTED_ERRORS
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -48,6 +57,10 @@ class PopulifeState:
     is_dormant: bool = False
     is_locking: bool = False
     is_unlocking: bool = False
+    # Admin settings: unknown until read over a connection.
+    auto_lock_seconds: int | None = None
+    auto_lock_limits: AutoLockLimits | None = None
+    lock_sound: bool | None = None
 
 
 def parse_advertisement(
@@ -62,10 +75,17 @@ def parse_advertisement(
     return None
 
 
+def is_key_rejected(err: TTLockError) -> bool:
+    """Return True when the safe refused the key itself rather than the command."""
+    return str(err).startswith(KEY_REJECTED_ERRORS)
+
+
 class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
     """Track advertisements and run commands for one safe."""
 
-    def __init__(self, hass: HomeAssistant, key: VirtualKey) -> None:
+    def __init__(
+        self, hass: HomeAssistant, config_entry: PopulifeConfigEntry, key: VirtualKey
+    ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -74,11 +94,19 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
             bluetooth.BluetoothScanningMode.PASSIVE,
             connectable=True,
         )
+        self.config_entry = config_entry
         self.key = key
+        # Admin commands need the admin password itself: an owner's cloud key
+        # (`is_admin()`) carries it, and a hand-entered key may carry it without
+        # the cloud `userType`. Without it the library refuses before connecting.
+        self.has_admin = key.adminPs.isdigit()
         self.state = PopulifeState()
         self._client: TTLockClient | None = None
         self._command_lock = asyncio.Lock()
         self._cancel_disconnect: CALLBACK_TYPE | None = None
+        self._settings_requested = False
+        self._operation_listeners: list[Callable[[LockEvent], None]] = []
+        self._last_record_id: int | None = None
 
     @callback
     @override
@@ -118,21 +146,94 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
             self.state.is_locking = not unlocking
             self.async_update_listeners()
             try:
-                client = await self._async_get_client()
-                await command(client)
-            except (TTLockError, BleakError, TimeoutError) as err:
-                await self._async_disconnect()
-                raise HomeAssistantError(
-                    translation_domain=DOMAIN,
-                    translation_key="command_failed",
-                    translation_placeholders={"error": str(err)},
-                ) from err
-            else:
+                await self._async_run_locked(command)
                 self.state.lock_state = result
-                self._schedule_disconnect()
             finally:
                 self.state.is_locking = self.state.is_unlocking = False
                 self.async_update_listeners()
+        if self.has_admin and not self._settings_requested:
+            # The link is still open, so reading the settings now costs no
+            # extra connection.
+            self._settings_requested = True
+            self.config_entry.async_create_background_task(
+                self.hass, self._async_load_settings(), f"{DOMAIN} {self.address} settings"
+            )
+
+    async def async_run[T](self, command: Callable[[TTLockClient], Awaitable[T]]) -> T:
+        """Run `command` over a connection opened on demand and dropped when idle."""
+        async with self._command_lock:
+            return await self._async_run_locked(command)
+
+    async def _async_run_locked[T](self, command: Callable[[TTLockClient], Awaitable[T]]) -> T:
+        try:
+            client = await self._async_get_client()
+            result = await command(client)
+        except (TTLockError, BleakError, TimeoutError) as err:
+            await self._async_disconnect()
+            if isinstance(err, TTLockError) and is_key_rejected(err):
+                self.config_entry.async_start_reauth(self.hass)
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="key_rejected",
+                    translation_placeholders={"error": str(err)},
+                ) from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
+        self._schedule_disconnect()
+        return result
+
+    async def async_refresh_auto_lock(self) -> None:
+        """Read the auto-lock delay and the range the firmware accepts."""
+
+        async def read(client: TTLockClient) -> tuple[AutoLockLimits, int]:
+            return await client.get_auto_lock_limits(), await client.get_auto_lock_time()
+
+        self.state.auto_lock_limits, self.state.auto_lock_seconds = await self.async_run(read)
+        self.async_update_listeners()
+
+    async def async_set_auto_lock(self, seconds: int) -> None:
+        """Set the auto-lock delay; 0 turns auto-lock off."""
+        await self.async_run(lambda client: client.set_auto_lock_time(seconds))
+        self.state.auto_lock_seconds = seconds
+        self.async_update_listeners()
+
+    async def async_refresh_lock_sound(self) -> None:
+        """Read whether the safe beeps."""
+        sound = await self.async_run(lambda client: client.get_lock_sound())
+        self.state.lock_sound = sound.enabled
+        self.async_update_listeners()
+
+    async def async_set_lock_sound(self, *, enabled: bool) -> None:
+        """Turn the beep on or off."""
+        await self.async_run(lambda client: client.set_lock_sound(enabled=enabled))
+        self.state.lock_sound = enabled
+        self.async_update_listeners()
+
+    async def async_sync_time(self) -> float:
+        """Set the safe's clock to Home Assistant's local time; return the drift it had."""
+        return await self.async_run(lambda client: client.sync_time(local_time=dt_util.now()))
+
+    async def _async_load_settings(self) -> None:
+        """Read the admin settings once, so the settings entities show a value."""
+        for refresh in (self.async_refresh_auto_lock, self.async_refresh_lock_sound):
+            try:
+                await refresh()
+            except HomeAssistantError as err:
+                _LOGGER.debug("%s: could not read settings: %s", self.address, err)
+
+    @callback
+    def async_add_operation_listener(self, listener: Callable[[LockEvent], None]) -> CALLBACK_TYPE:
+        """Call `listener` for every operation-log push; return a remover."""
+        self._operation_listeners.append(listener)
+
+        @callback
+        def remove() -> None:
+            self._operation_listeners.remove(listener)
+
+        return remove
 
     async def _async_get_client(self) -> TTLockClient:
         """Reuse the open connection, or connect through the best adapter / proxy."""
@@ -157,12 +258,17 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
 
     @callback
     def _async_handle_lock_event(self, event: LockEvent) -> None:
-        """Apply a state push from the open connection (keypad, fingerprint, re-latch)."""
+        """Apply a push from the open connection (keypad, fingerprint, re-latch, log entry)."""
         _LOGGER.debug("%s: lock event %s", self.address, event)
         if event.battery is not None:
             self.state.battery = event.battery
         if event.lock_state is not None:
             self.state.lock_state = event.lock_state
+        # The firmware may push the same record more than once.
+        if event.record_id is not None and event.record_id != self._last_record_id:
+            self._last_record_id = event.record_id
+            for listener in list(self._operation_listeners):
+                listener(event)
         self.async_update_listeners()
 
     @callback

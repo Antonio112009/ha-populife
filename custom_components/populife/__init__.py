@@ -14,13 +14,20 @@ from .coordinator import PopulifeConfigEntry, PopulifeCoordinator
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-PLATFORMS: list[Platform] = [Platform.LOCK, Platform.SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
+    Platform.EVENT,
+    Platform.LOCK,
+    Platform.NUMBER,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: PopulifeConfigEntry) -> bool:
     """Set up a Populife safe from a config entry."""
     key = VirtualKey.from_dict(cast("dict[str, Any]", entry.data[CONF_KEY]))
-    coordinator = PopulifeCoordinator(hass, key)
+    coordinator = PopulifeCoordinator(hass, entry, key)
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     # Start listening only once the entities exist, so the first advertisement

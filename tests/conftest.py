@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from ttlock_ble import AutoLockLimits, LockSound
 
 from homeassistant.core import HomeAssistant
 
@@ -40,6 +41,14 @@ def _mock_client() -> MagicMock:
     client.lock = AsyncMock()
     client.unlock = AsyncMock()
     client.query_state = AsyncMock(return_value=(None, None))
+    client.get_auto_lock_limits = AsyncMock(
+        return_value=AutoLockLimits(min_allowed=5, max_allowed=900)
+    )
+    client.get_auto_lock_time = AsyncMock(return_value=30)
+    client.set_auto_lock_time = AsyncMock()
+    client.get_lock_sound = AsyncMock(return_value=LockSound(enabled=True, volume=None))
+    client.set_lock_sound = AsyncMock()
+    client.sync_time = AsyncMock(return_value=12.5)
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
     return client

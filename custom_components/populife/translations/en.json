@@ -15,6 +15,22 @@
           "manual": "Enter the key manually"
         }
       },
+      "reauth_confirm": {
+        "title": "Replace key",
+        "description": "{name} rejected its Bluetooth key, for example because it was revoked or the safe was reset. How should Home Assistant get the new key?",
+        "menu_options": {
+          "cloud": "Import it from my TTLock-family account",
+          "manual": "Enter the key manually"
+        }
+      },
+      "reconfigure": {
+        "title": "Replace key",
+        "description": "Replace the Bluetooth key Home Assistant uses for {name}, for example to add the admin password. How should Home Assistant get the new key?",
+        "menu_options": {
+          "cloud": "Import it from my TTLock-family account",
+          "manual": "Enter the key manually"
+        }
+      },
       "cloud": {
         "title": "Import key from cloud",
         "description": "Sign in with the account the safe is paired to. Home Assistant downloads the key for {name} once and does not store your password; every command afterwards runs locally over Bluetooth.",
@@ -36,12 +52,12 @@
         "data": {
           "aes_key": "AES key",
           "unlock_key": "Unlock key",
-          "admin_password": "Admin password"
+          "admin_password": "Bluetooth admin password"
         },
         "data_description": {
           "aes_key": "16 bytes as hex, either continuous (32 characters) or comma separated.",
           "unlock_key": "The decoded numeric unlock key.",
-          "admin_password": "Optional. Only needed for admin features."
+          "admin_password": "Optional. This is the hidden Bluetooth admin secret, not the keypad \"Admin code\" shown in the app. Leave it empty unless you have it."
         }
       }
     },
@@ -57,7 +73,47 @@
     "abort": {
       "already_configured": "Device is already configured",
       "no_devices_found": "No devices found on the network",
-      "not_supported": "This device does not look like a Populife or TTLock safe."
+      "not_supported": "This device does not look like a Populife or TTLock safe.",
+      "reauth_successful": "Re-authentication was successful",
+      "reconfigure_successful": "Re-configuration was successful"
+    }
+  },
+  "entity": {
+    "button": {
+      "sync_time": {
+        "name": "Sync clock"
+      }
+    },
+    "event": {
+      "operation": {
+        "name": "Operation",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "operation": "Operation logged"
+            }
+          },
+          "record_id": {
+            "name": "Record ID"
+          },
+          "uid": {
+            "name": "User ID"
+          },
+          "timestamp": {
+            "name": "Safe time"
+          }
+        }
+      }
+    },
+    "number": {
+      "auto_lock_delay": {
+        "name": "Auto-lock delay"
+      }
+    },
+    "switch": {
+      "lock_sound": {
+        "name": "Lock sound"
+      }
     }
   },
   "exceptions": {
@@ -66,6 +122,12 @@
     },
     "device_not_found": {
       "message": "No connectable Bluetooth adapter or proxy can reach {address}. Touch the keypad to wake the safe and try again."
+    },
+    "key_rejected": {
+      "message": "The safe rejected the Bluetooth key ({error}). Replace the key when Settings > Devices & services asks you to re-authenticate."
+    },
+    "auto_lock_too_short": {
+      "message": "The safe accepts an auto-lock delay of 0 (off) or at least {min} seconds."
     }
   }
 }

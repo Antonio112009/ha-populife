@@ -16,6 +16,19 @@ Home Assistant talks to the safe directly.
 | `lock.<safe>` | Lock / unlock the safe. State is read passively from the safe's advertisements. |
 | `sensor.<safe>_battery` | Battery level (diagnostic). |
 | `sensor.<safe>_signal_strength` | RSSI (diagnostic, disabled by default). |
+| `event.<safe>_operation` | Fires for each operation-log record (keypad, fingerprint, card, app) the safe pushes while connected. |
+
+With an admin key (the owner's key from the cloud, or a manual key with the Bluetooth admin
+password) you also get these settings:
+
+| Entity | Description |
+| --- | --- |
+| `number.<safe>_auto_lock_delay` | Seconds before the safe re-locks by itself; 0 turns auto-lock off. |
+| `switch.<safe>_lock_sound` | Keypad and bolt beep. |
+| `button.<safe>_sync_clock` | Set the safe's clock to Home Assistant's local time. |
+
+The settings are read over the connection opened by the first lock / unlock command, and on
+demand with `homeassistant.update_entity`; until then they show as unknown.
 
 ## Requirements
 
@@ -46,6 +59,10 @@ paired. The integration offers two ways to provide them:
 - **Enter it manually.** Paste the AES key (16 hex bytes) and the numeric unlock key.
   Home Assistant connects once to check the AES key before saving.
 
+If the safe later rejects the key (for example because it was revoked or the safe was
+reset), Home Assistant asks you to re-authenticate and replace it the same two ways. To swap
+the key yourself, for example to add the admin password, use **Reconfigure** on the entry.
+
 Treat the key like the safe's PIN: anyone who has it can open the safe. Diagnostics downloads
 redact it.
 
@@ -54,7 +71,7 @@ redact it.
 - **State** comes from the safe's BLE advertisements, so nothing stays connected. The safe's
   firmware clears the bolt bit when it goes dormant, so dormant frames are ignored and the
   last real state is kept.
-- **Commands** open a connection through whichever adapter or proxy has the best signal, run,
+- **Commands** (including the settings above) open a connection through whichever adapter or proxy has the best signal, run,
   and then disconnect after 15 seconds of inactivity to free the proxy slot.
 
 ## Development

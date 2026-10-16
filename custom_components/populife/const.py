@@ -28,3 +28,16 @@ ERR_NEW_DEVICE_LOGIN: Final = -1014
 # adapter / proxy slot for other devices.
 KEEP_ALIVE_SECONDS: Final = 10.0
 DISCONNECT_DELAY_SECONDS: Final = 15.0
+
+# Prefixes of the TTLockError messages raised when the safe refuses the key
+# itself (wrong AES key, revoked or expired key, wrong admin password), as
+# opposed to a single command failing. These start a reauth flow.
+KEY_REJECTED_ERRORS: Final = (
+    "Failed to validate virtual key",
+    "Failed to authorize as admin",
+    "Failed to check_random",
+    "Failed to decrypt",
+)
+
+# The auto-lock range most firmware reports, shown until the safe is read.
+DEFAULT_AUTO_LOCK_MAX_SECONDS: Final = 900

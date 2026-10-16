@@ -278,3 +278,113 @@ async def test_cloud_prefers_any_key_without_admin(
     result = await hass.config_entries.flow.async_configure(flow_id, CLOUD_INPUT)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_KEY]["adminPs"] == ""
+
+
+async def test_reauth_from_cloud(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_cloud: MagicMock
+) -> None:
+    """Reauth imports a fresh key into the existing entry and keeps its title."""
+    mock_cloud.list_keys.return_value = [make_key()]
+    result = await config_entry.start_reauth_flow(hass)
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "reauth_confirm"
+    assert result["description_placeholders"] == {"name": "Office safe"}
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "cloud"}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], CLOUD_INPUT)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert config_entry.title == "Office safe"
+    assert config_entry.data[CONF_KEY]["adminPs"] == ""
+    assert config_entry.data[CONF_ADDRESS] == ADDRESS
+
+
+async def test_reauth_manual_keeps_firmware_ids(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_flow_client: MagicMock
+) -> None:
+    """A hand-entered key reuses the entry's firmware ids, not the defaults."""
+    lock_version = {
+        "protocolType": 5,
+        "protocolVersion": 3,
+        "scene": 2,
+        "groupId": 7,
+        "orgId": 9,
+    }
+    key = {**config_entry.data[CONF_KEY], "lockVersion": lock_version}
+    hass.config_entries.async_update_entry(config_entry, data={**config_entry.data, CONF_KEY: key})
+    inject(hass, service_info())
+    await hass.async_block_till_done()
+
+    result = await config_entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "manual"}
+    )
+    assert result["step_id"] == "manual"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {**MANUAL_INPUT, CONF_UNLOCK_KEY: "555"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert config_entry.data[CONF_KEY]["unlockKey"] == "555"
+    assert config_entry.data[CONF_KEY]["lockVersion"] == lock_version
+    assert config_entry.data[CONF_KEY]["lockAlias"] == "Office safe"
+
+
+async def test_reauth_cloud_wrong_safe(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_cloud: MagicMock
+) -> None:
+    """An account without this safe cannot replace its key."""
+    mock_cloud.list_keys.return_value = [make_key(address="11:22:33:44:55:66")]
+    result = await config_entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "cloud"}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], CLOUD_INPUT)
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "lock_not_in_account"}
+
+
+async def test_reconfigure_from_cloud(
+    hass: HomeAssistant, mock_cloud: MagicMock, mock_flow_client: MagicMock
+) -> None:
+    """Reconfigure upgrades a shared key to the owner's admin key."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=ADDRESS,
+        title="Office safe",
+        data={CONF_ADDRESS: ADDRESS, CONF_KEY: make_key().to_dict()},
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "reconfigure"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "cloud"}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], CLOUD_INPUT)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_KEY]["adminPs"] == "987654321"
+
+
+async def test_reconfigure_manual(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_flow_client: MagicMock
+) -> None:
+    """Reconfigure can take a hand-entered key, checked against the safe first."""
+    inject(hass, service_info())
+    await hass.async_block_till_done()
+    result = await config_entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "manual"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {**MANUAL_INPUT, CONF_ADMIN_PASSWORD: "246810"}
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert config_entry.data[CONF_KEY]["adminPs"] == "246810"
+    mock_flow_client.query_state.assert_awaited_once()

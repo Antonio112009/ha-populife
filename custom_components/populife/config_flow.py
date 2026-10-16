@@ -3,12 +3,14 @@
 The safe is found over Bluetooth. Its per-lock secrets (AES key and unlock
 key) either come from a TTLock-family cloud account once, or are entered by
 hand. The account password is never stored: only the lock key is kept.
+Reauth (after the safe rejects the key) and reconfigure replace the key of
+an existing entry through the same cloud and manual steps.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bleak.exc import BleakError
 import httpx
@@ -21,7 +23,13 @@ from homeassistant.components.bluetooth import (
     async_ble_device_from_address,
     async_discovered_service_info,
 )
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+)
 from homeassistant.const import CONF_ADDRESS, CONF_EMAIL, CONF_PASSWORD
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
@@ -40,6 +48,8 @@ from .const import (
 from .coordinator import parse_advertisement
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from ttlock_ble import LockAdvertisement
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,8 +91,8 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the flow."""
         self._discovered: dict[str, BluetoothServiceInfoBleak] = {}
-        self._discovery: BluetoothServiceInfoBleak | None = None
-        self._advertisement: LockAdvertisement | None = None
+        self._device_name: str | None = None
+        self._lock_version: LockVersion | None = None
         self._cloud: TTLockCloud | None = None
         self._email = ""
         self._password = ""
@@ -94,8 +104,27 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @property
     def _name(self) -> str:
-        assert self._discovery is not None
-        return self._discovery.name or self._address
+        return self._device_name or self._address
+
+    def _use_advertisement(
+        self, info: BluetoothServiceInfoBleak, advertisement: LockAdvertisement
+    ) -> None:
+        """Take the name and firmware ids a hand-entered key needs from the safe."""
+        self._device_name = info.name or None
+        self._lock_version = LockVersion(
+            protocolType=advertisement.protocol_type,
+            protocolVersion=advertisement.protocol_version,
+            scene=advertisement.scene,
+            groupId=DEFAULT_GROUP_ID,
+            orgId=DEFAULT_ORG_ID,
+        )
+
+    async def _async_use_entry(self, entry: ConfigEntry) -> None:
+        """Replace the key of `entry`: keep its safe, name and firmware ids."""
+        await self.async_set_unique_id(entry.unique_id, raise_on_progress=False)
+        key = VirtualKey.from_dict(cast("dict[str, Any]", entry.data[CONF_KEY]))
+        self._device_name = entry.title
+        self._lock_version = key.lockVersion
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -105,8 +134,7 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
         if (advertisement := parse_advertisement(discovery_info)) is None:
             return self.async_abort(reason="not_supported")
-        self._discovery = discovery_info
-        self._advertisement = advertisement
+        self._use_advertisement(discovery_info, advertisement)
         self.context["title_placeholders"] = {"name": self._name}
         return await self.async_step_method()
 
@@ -116,8 +144,10 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
             address = user_input[CONF_ADDRESS]
             await self.async_set_unique_id(address, raise_on_progress=False)
             self._abort_if_unique_id_configured()
-            self._discovery = self._discovered[address]
-            self._advertisement = parse_advertisement(self._discovery)
+            info = self._discovered[address]
+            advertisement = parse_advertisement(info)
+            assert advertisement is not None
+            self._use_advertisement(info, advertisement)
             return await self.async_step_method()
 
         configured = self._async_current_ids(include_ignore=False)
@@ -148,6 +178,32 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
         """Ask how to obtain the safe's key."""
         return self.async_show_menu(
             step_id="method",
+            menu_options=["cloud", "manual"],
+            description_placeholders={"name": self._name},
+        )
+
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+        """Start replacing a key the safe rejected."""
+        await self._async_use_entry(self._get_reauth_entry())
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask how to obtain the new key."""
+        return self.async_show_menu(
+            step_id="reauth_confirm",
+            menu_options=["cloud", "manual"],
+            description_placeholders={"name": self._name},
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Replace the key of a working entry, for example to add the admin password."""
+        await self._async_use_entry(self._get_reconfigure_entry())
+        return self.async_show_menu(
+            step_id="reconfigure",
             menu_options=["cloud", "manual"],
             description_placeholders={"name": self._name},
         )
@@ -269,22 +325,15 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     def _manual_key(self, aes_key: str, unlock_key: str, admin_password: str) -> VirtualKey:
-        """Build a key from hand-entered secrets and the firmware ids the safe advertises."""
-        advertisement = self._advertisement
-        assert advertisement is not None
+        """Build a key from hand-entered secrets and the safe's firmware ids."""
+        assert self._lock_version is not None
         return VirtualKey(
             keyId=0,
             lockId=0,
             lockMac=self._address,
             lockAlias=self._name,
             lockName=self._name,
-            lockVersion=LockVersion(
-                protocolType=advertisement.protocol_type,
-                protocolVersion=advertisement.protocol_version,
-                scene=advertisement.scene,
-                groupId=DEFAULT_GROUP_ID,
-                orgId=DEFAULT_ORG_ID,
-            ),
+            lockVersion=self._lock_version,
             aesKeyStr=aes_key,
             unlockKey=unlock_key,
             lockFlagPos=0,
@@ -307,6 +356,14 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
         return None
 
     def _async_create(self, key: VirtualKey) -> ConfigFlowResult:
+        if self.source == SOURCE_REAUTH:
+            return self.async_update_reload_and_abort(
+                self._get_reauth_entry(), data_updates={CONF_KEY: key.to_dict()}
+            )
+        if self.source == SOURCE_RECONFIGURE:
+            return self.async_update_reload_and_abort(
+                self._get_reconfigure_entry(), data_updates={CONF_KEY: key.to_dict()}
+            )
         return self.async_create_entry(
             title=key.lockAlias or key.lockName or self._name,
             data={CONF_ADDRESS: self._address, CONF_KEY: key.to_dict()},
