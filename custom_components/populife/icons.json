@@ -3,6 +3,9 @@
     "button": {
       "sync_time": {
         "default": "mdi:clock-check-outline"
+      },
+      "refresh": {
+        "default": "mdi:refresh"
       }
     },
     "event": {
@@ -30,6 +33,15 @@
           "gateway": "mdi:router-wireless",
           "remote": "mdi:remote"
         }
+      },
+      "clock_drift": {
+        "default": "mdi:clock-alert-outline"
+      },
+      "fingerprints": {
+        "default": "mdi:fingerprint"
+      },
+      "passcodes": {
+        "default": "mdi:dialpad"
       }
     },
     "switch": {
@@ -37,6 +49,15 @@
         "default": "mdi:volume-high",
         "state": {
           "off": "mdi:volume-off"
+        }
+      }
+    },
+    "select": {
+      "lock_volume": {
+        "default": "mdi:volume-medium",
+        "state": {
+          "low": "mdi:volume-low",
+          "high": "mdi:volume-high"
         }
       }
     }
@@ -53,6 +74,9 @@
     },
     "list_passcodes": {
       "service": "mdi:format-list-numbered"
+    },
+    "list_fingerprints": {
+      "service": "mdi:fingerprint"
     }
   }
 }

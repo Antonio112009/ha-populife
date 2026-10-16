@@ -83,6 +83,8 @@ Anyone in range can *see* a safe, but only the holder of its key can open it.
 | `sensor.<safe>_signal_strength` | RSSI in dBm (diagnostic, disabled by default). |
 | `sensor.<safe>_last_unlock` | When the safe was last opened, from its own operation log. |
 | `sensor.<safe>_last_unlock_method` | How it was opened: app, keypad, fingerprint, card, mechanical key, gateway or remote. |
+| `sensor.<safe>_clock_drift` | Seconds the safe's clock is ahead (or behind, negative) of Home Assistant (diagnostic). |
+| `button.<safe>_refresh` | Read everything from the safe again: state, device info, clock, settings, counts, log. |
 | `event.<safe>_operation` | Fires for every new operation-log record, typed by method (also `failed` and `alarm`). Shows in the device's **Activity**. |
 
 The safe keeps its own operation log, and its advertisements say when there are new records.
@@ -94,6 +96,10 @@ After a restart, Home Assistant connects once to read the bolt state, battery, a
 and new log records. Model, firmware, hardware revision and serial number are stored on the
 device. A battery below 20% raises a **Repairs** issue that clears again from 25%.
 
+**Download diagnostics** on the device page also includes what the safe reports about
+itself over Bluetooth: the features its firmware supports, its model variant, manufacture
+date and internal clock, and the fingerprint slots. Keys are redacted.
+
 With an **admin key** (the owner's key, or a manual key that includes the Bluetooth admin
 password) you also get:
 
@@ -102,6 +108,9 @@ password) you also get:
 | `number.<safe>_auto_lock_delay` | Seconds before the safe re-locks itself; `0` turns auto-lock off. |
 | `switch.<safe>_lock_sound` | Keypad and bolt beep. |
 | `button.<safe>_sync_clock` | Set the safe's clock to Home Assistant's local time. |
+| `select.<safe>_lock_volume` | Beep volume, low to high. Only appears on safes with a speaker. |
+| `sensor.<safe>_fingerprints` | Number of enrolled fingerprints (diagnostic). |
+| `sensor.<safe>_passcodes` | Number of keypad passcodes the safe reports (diagnostic). |
 
 These settings are read right after startup, or on demand with `homeassistant.update_entity`.
 
@@ -113,6 +122,7 @@ These settings are read right after startup, or on demand with `homeassistant.up
 | `populife.delete_passcode` | Remove a code. |
 | `populife.clear_passcodes` | Remove **every** code, including ones made in the app. There's no undo. |
 | `populife.list_passcodes` | Return the codes the safe reports (response data). |
+| `populife.list_fingerprints` | Return the enrolled fingerprints: slot and validity. |
 
 ```yaml
 # A code for a guest that works only this weekend
@@ -211,6 +221,8 @@ logger:
 - [x] Operation log import with last-unlock sensors, even for openings while offline
 - [x] State, device info and settings read after startup
 - [x] Low-battery repair issue
+- [x] Metrics read from the safe: clock drift, fingerprint and passcode counts, features and
+      properties, volume, refresh button
 - [ ] Optional [Populife Open API](https://open.populife.co/doc/index_en.html) support:
       create one-time and time-limited PIN codes from automations, and import the unlock history
 - [ ] Confirmed-models list and device-specific quirks

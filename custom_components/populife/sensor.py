@@ -12,7 +12,12 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, EntityCategory
+from homeassistant.const import (
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
+    UnitOfTime,
+)
 
 from .entity import PopulifeEntity
 from .operation_log import UNLOCK_METHODS
@@ -27,7 +32,7 @@ if TYPE_CHECKING:
 
 PARALLEL_UPDATES = 0
 
-type SensorValue = int | str | dt.datetime | None
+type SensorValue = int | float | str | dt.datetime | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -38,6 +43,8 @@ class PopulifeSensorEntityDescription(SensorEntityDescription):
     # Values that come from the operation log survive restarts: the log only reports
     # records once, so they would otherwise stay unknown until the safe is used again.
     restore_fn: Callable[[PopulifeState, object], None] | None = None
+    # Read with the admin handshake, so only created for admin keys.
+    admin_only: bool = False
 
 
 def _restore_last_unlock(state: PopulifeState, value: object) -> None:
@@ -83,6 +90,31 @@ SENSORS: tuple[PopulifeSensorEntityDescription, ...] = (
         value_fn=lambda state: state.last_unlock_method,
         restore_fn=_restore_last_unlock_method,
     ),
+    PopulifeSensorEntityDescription(
+        key="clock_drift",
+        translation_key="clock_drift",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda state: state.clock_drift,
+    ),
+    PopulifeSensorEntityDescription(
+        key="fingerprints",
+        translation_key="fingerprints",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda state: state.fingerprint_count,
+        admin_only=True,
+    ),
+    PopulifeSensorEntityDescription(
+        key="passcodes",
+        translation_key="passcodes",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda state: state.passcode_count,
+        admin_only=True,
+    ),
 )
 
 
@@ -92,7 +124,12 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the sensors."""
-    async_add_entities(PopulifeSensor(entry.runtime_data, description) for description in SENSORS)
+    coordinator = entry.runtime_data
+    async_add_entities(
+        PopulifeSensor(coordinator, description)
+        for description in SENSORS
+        if coordinator.has_admin or not description.admin_only
+    )
 
 
 class PopulifeSensor(PopulifeEntity, RestoreSensor):

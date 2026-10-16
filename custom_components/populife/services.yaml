@@ -39,3 +39,9 @@ list_passcodes:
     entity:
       integration: populife
       domain: lock
+
+list_fingerprints:
+  target:
+    entity:
+      integration: populife
+      domain: lock
