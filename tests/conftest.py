@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-from ttlock_ble import AutoLockLimits, LockSound
+from ttlock_ble import AutoLockLimits, DeviceInfo, LockSound
 
 from homeassistant.core import HomeAssistant
 
@@ -24,6 +24,21 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 @pytest.fixture(autouse=True)
 def auto_enable_bluetooth(enable_bluetooth: None) -> None:
     """Run every test with a mocked Bluetooth adapter."""
+
+
+@pytest.fixture(autouse=True)
+def no_startup_refresh(request: pytest.FixtureRequest) -> Generator[None]:
+    """Keep the coordinator from connecting by itself on advertisements.
+
+    Tests about commands and settings count connections and calls, so the
+    post-startup refresh and new-record log syncs only run in tests marked
+    `startup_refresh`.
+    """
+    if request.node.get_closest_marker("startup_refresh"):
+        yield
+        return
+    with patch("custom_components.populife.coordinator.PopulifeCoordinator._async_maybe_connect"):
+        yield
 
 
 def _mock_client() -> MagicMock:
@@ -49,6 +64,21 @@ def _mock_client() -> MagicMock:
     client.get_lock_sound = AsyncMock(return_value=LockSound(enabled=True, volume=None))
     client.set_lock_sound = AsyncMock()
     client.sync_time = AsyncMock(return_value=12.5)
+    client.get_device_info = AsyncMock(
+        return_value=DeviceInfo(
+            manufacturer="Populife",
+            model="SN8534-4P-4MM-BELL_PV53",
+            serial_number=None,
+            hardware_revision="1.3",
+            firmware_revision="7.2.20.251111",
+            software_revision=None,
+        )
+    )
+    client.get_operation_log = AsyncMock(return_value=[])
+    client.add_passcode = AsyncMock()
+    client.delete_passcode = AsyncMock()
+    client.clear_passcodes = AsyncMock()
+    client.get_passcodes = AsyncMock(return_value=[])
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
     return client

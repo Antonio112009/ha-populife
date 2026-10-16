@@ -46,3 +46,14 @@ KEY_REJECTED_ERRORS: Final = (
 
 # The auto-lock range most firmware reports, shown until the safe is read.
 DEFAULT_AUTO_LOCK_MAX_SECONDS: Final = 900
+
+# Raise a repair below this battery level; clear it again from BATTERY_OK_LEVEL so a level
+# that hovers around the threshold doesn't flap.
+LOW_BATTERY_LEVEL: Final = 20
+BATTERY_OK_LEVEL: Final = 25
+
+# After startup Home Assistant connects once to read the state, device info and settings;
+# if the safe can't be reached it tries again on an advertisement this much later.
+REFRESH_RETRY_SECONDS: Final = 300.0
+# At most one connection per this interval to fetch log records the safe flags as new.
+LOG_SYNC_MIN_INTERVAL_SECONDS: Final = 60.0

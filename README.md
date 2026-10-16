@@ -81,7 +81,18 @@ Anyone in range can *see* a safe, but only the holder of its key can open it.
 | `lock.<safe>` | Lock / unlock. Shows `locking` / `unlocking` while a command runs. |
 | `sensor.<safe>_battery` | Battery level (diagnostic). |
 | `sensor.<safe>_signal_strength` | RSSI in dBm (diagnostic, disabled by default). |
-| `event.<safe>_operation` | Fires for each operation-log record (keypad, fingerprint, card, app) pushed while connected. |
+| `sensor.<safe>_last_unlock` | When the safe was last opened, from its own operation log. |
+| `sensor.<safe>_last_unlock_method` | How it was opened: app, keypad, fingerprint, card, mechanical key, gateway or remote. |
+| `event.<safe>_operation` | Fires for every new operation-log record, typed by method (also `failed` and `alarm`). Shows in the device's **Activity**. |
+
+The safe keeps its own operation log, and its advertisements say when there are new records.
+Home Assistant then connects briefly and reads them, so openings that happened while Home
+Assistant was offline still appear. Keypad codes are never put into events or attributes;
+only fingerprint and card IDs are.
+
+After a restart, Home Assistant connects once to read the bolt state, battery, admin settings
+and new log records. Model, firmware, hardware revision and serial number are stored on the
+device. A battery below 20% raises a **Repairs** issue that clears again from 25%.
 
 With an **admin key** (the owner's key, or a manual key that includes the Bluetooth admin
 password) you also get:
@@ -92,8 +103,29 @@ password) you also get:
 | `switch.<safe>_lock_sound` | Keypad and bolt beep. |
 | `button.<safe>_sync_clock` | Set the safe's clock to Home Assistant's local time. |
 
-These settings are read over the connection opened by the first lock or unlock, or on demand
-with `homeassistant.update_entity`. Until then they show as unknown.
+These settings are read right after startup, or on demand with `homeassistant.update_entity`.
+
+### Keypad passcodes (admin key)
+
+| Action | What it does |
+| --- | --- |
+| `populife.add_passcode` | Add a 4–9 digit code: permanent, or valid between `start` and `end`. |
+| `populife.delete_passcode` | Remove a code. |
+| `populife.clear_passcodes` | Remove **every** code, including ones made in the app. There's no undo. |
+| `populife.list_passcodes` | Return the codes the safe reports (response data). |
+
+```yaml
+# A code for a guest that works only this weekend
+action: populife.add_passcode
+target:
+  entity_id: lock.office_safe
+data:
+  code: "482916"
+  start: "2026-11-07 09:00:00"
+  end: "2026-11-08 20:00:00"
+```
+
+The safe only lists codes made in the app after they've been used once.
 
 ## Requirements
 
@@ -175,6 +207,10 @@ logger:
 - [x] Operation-log events
 - [x] "Scan again" in setup when no safe is in range yet
 - [x] Paste lock data copied from the app
+- [x] Keypad passcode actions (add, delete, clear, list)
+- [x] Operation log import with last-unlock sensors, even for openings while offline
+- [x] State, device info and settings read after startup
+- [x] Low-battery repair issue
 - [ ] Optional [Populife Open API](https://open.populife.co/doc/index_en.html) support:
       create one-time and time-limited PIN codes from automations, and import the unlock history
 - [ ] Confirmed-models list and device-specific quirks

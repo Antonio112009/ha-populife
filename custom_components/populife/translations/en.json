@@ -132,17 +132,37 @@
         "state_attributes": {
           "event_type": {
             "state": {
-              "operation": "Operation logged"
+              "app": "App",
+              "keypad": "Keypad",
+              "fingerprint": "Fingerprint",
+              "card": "Card",
+              "key": "Mechanical key",
+              "gateway": "Gateway",
+              "remote": "Remote or wireless keypad",
+              "failed": "Failed attempt",
+              "alarm": "Alarm",
+              "other": "Other"
             }
           },
-          "record_id": {
-            "name": "Record ID"
+          "action": {
+            "name": "Action",
+            "state": {
+              "unlock": "Unlock",
+              "lock": "Lock",
+              "other": "Other"
+            }
           },
-          "uid": {
-            "name": "User ID"
+          "record_type": {
+            "name": "Record type"
           },
-          "timestamp": {
-            "name": "Safe time"
+          "time": {
+            "name": "Time"
+          },
+          "battery": {
+            "name": "Battery"
+          },
+          "credential": {
+            "name": "Fingerprint or card ID"
           }
         }
       }
@@ -155,6 +175,23 @@
     "switch": {
       "lock_sound": {
         "name": "Lock sound"
+      }
+    },
+    "sensor": {
+      "last_unlock": {
+        "name": "Last unlock"
+      },
+      "last_unlock_method": {
+        "name": "Last unlock method",
+        "state": {
+          "app": "App",
+          "keypad": "Keypad",
+          "fingerprint": "Fingerprint",
+          "card": "Card",
+          "key": "Mechanical key",
+          "gateway": "Gateway",
+          "remote": "Remote or wireless keypad"
+        }
       }
     }
   },
@@ -170,6 +207,56 @@
     },
     "auto_lock_too_short": {
       "message": "The safe accepts an auto-lock delay of 0 (off) or at least {min} seconds."
+    },
+    "admin_required": {
+      "message": "Managing keypad passcodes needs an admin key. Use Reconfigure to add the safe's Bluetooth admin password."
+    },
+    "passcode_period_invalid": {
+      "message": "The passcode's end must be later than its start."
+    }
+  },
+  "issues": {
+    "low_battery": {
+      "title": "{name} battery is low",
+      "description": "The battery of {name} is at {battery}%. Replace the batteries soon so the safe keeps opening; keep a physical way in until then."
+    }
+  },
+  "services": {
+    "add_passcode": {
+      "name": "Add passcode",
+      "description": "Adds a keypad passcode to the safe. Without an end it is permanent; with an end it only works between start and end. Needs an admin key.",
+      "fields": {
+        "code": {
+          "name": "Passcode",
+          "description": "4 to 9 digits. Avoid codes that start with another active code: the keypad may match the shorter one."
+        },
+        "start": {
+          "name": "Start",
+          "description": "When a time-limited passcode starts working. Defaults to now."
+        },
+        "end": {
+          "name": "End",
+          "description": "When the passcode stops working. Leave empty for a permanent passcode."
+        }
+      }
+    },
+    "delete_passcode": {
+      "name": "Delete passcode",
+      "description": "Removes a keypad passcode from the safe. Needs an admin key.",
+      "fields": {
+        "code": {
+          "name": "Passcode",
+          "description": "The passcode to remove."
+        }
+      }
+    },
+    "clear_passcodes": {
+      "name": "Clear all passcodes",
+      "description": "Removes every keypad passcode from the safe, including ones created in the app. This can't be undone. Needs an admin key."
+    },
+    "list_passcodes": {
+      "name": "List passcodes",
+      "description": "Returns the keypad passcodes the safe reports. Codes created in the app may only appear after they have been used once. Needs an admin key."
     }
   }
 }

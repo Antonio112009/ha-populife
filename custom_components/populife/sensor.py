@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import datetime as dt
 from typing import TYPE_CHECKING, override
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
-    SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, EntityCategory
 
 from .entity import PopulifeEntity
+from .operation_log import UNLOCK_METHODS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,12 +27,27 @@ if TYPE_CHECKING:
 
 PARALLEL_UPDATES = 0
 
+type SensorValue = int | str | dt.datetime | None
+
 
 @dataclass(frozen=True, kw_only=True)
 class PopulifeSensorEntityDescription(SensorEntityDescription):
     """Describes a Populife sensor."""
 
-    value_fn: Callable[[PopulifeState], int | None]
+    value_fn: Callable[[PopulifeState], SensorValue]
+    # Values that come from the operation log survive restarts: the log only reports
+    # records once, so they would otherwise stay unknown until the safe is used again.
+    restore_fn: Callable[[PopulifeState, object], None] | None = None
+
+
+def _restore_last_unlock(state: PopulifeState, value: object) -> None:
+    if state.last_unlock is None and isinstance(value, dt.datetime):
+        state.last_unlock = value
+
+
+def _restore_last_unlock_method(state: PopulifeState, value: object) -> None:
+    if state.last_unlock_method is None and isinstance(value, str):
+        state.last_unlock_method = value
 
 
 SENSORS: tuple[PopulifeSensorEntityDescription, ...] = (
@@ -51,6 +68,21 @@ SENSORS: tuple[PopulifeSensorEntityDescription, ...] = (
         entity_registry_enabled_default=False,
         value_fn=lambda state: state.rssi,
     ),
+    PopulifeSensorEntityDescription(
+        key="last_unlock",
+        translation_key="last_unlock",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=lambda state: state.last_unlock,
+        restore_fn=_restore_last_unlock,
+    ),
+    PopulifeSensorEntityDescription(
+        key="last_unlock_method",
+        translation_key="last_unlock_method",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(UNLOCK_METHODS),
+        value_fn=lambda state: state.last_unlock_method,
+        restore_fn=_restore_last_unlock_method,
+    ),
 )
 
 
@@ -63,8 +95,8 @@ async def async_setup_entry(
     async_add_entities(PopulifeSensor(entry.runtime_data, description) for description in SENSORS)
 
 
-class PopulifeSensor(PopulifeEntity, SensorEntity):
-    """A value read from the safe's advertisements."""
+class PopulifeSensor(PopulifeEntity, RestoreSensor):
+    """A value read from the safe's advertisements or its operation log."""
 
     entity_description: PopulifeSensorEntityDescription
 
@@ -77,8 +109,17 @@ class PopulifeSensor(PopulifeEntity, SensorEntity):
         super().__init__(coordinator, description.key)
         self.entity_description = description
 
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Restore the last value of log-based sensors."""
+        await super().async_added_to_hass()
+        if (restore := self.entity_description.restore_fn) is not None and (
+            last := await self.async_get_last_sensor_data()
+        ) is not None:
+            restore(self.coordinator.state, last.native_value)
+
     @property
     @override
-    def native_value(self) -> int | None:
+    def native_value(self) -> SensorValue:
         """Return the sensor value."""
         return self.entity_description.value_fn(self.coordinator.state)

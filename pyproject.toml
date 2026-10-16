@@ -32,6 +32,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "--cov=custom_components.populife --cov-report=term-missing --cov-fail-under=90"
+markers = ["startup_refresh: let the coordinator connect by itself after advertisements"]
 
 [tool.coverage.run]
 branch = true
@@ -57,7 +58,7 @@ ignore = [
 "custom_components/populife/const.py" = ["S105"]  # CONF_* names, not secrets
 "custom_components/populife/lock_data.py" = ["EM101"]  # LockDataError takes error keys, not messages
 "scripts/**" = ["INP001"]  # standalone scripts, not a package
-"tests/**" = ["PLR0913", "PLR2004", "SLF001", "D", "ANN", "TC"]
+"tests/**" = ["PLR0913", "PLR2004", "S106", "SLF001", "D", "ANN", "TC"]
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true
