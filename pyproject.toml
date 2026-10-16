@@ -1,0 +1,82 @@
+[project]
+name = "ha-populife"
+version = "0.1.0"
+description = "Home Assistant custom integration for Populife (TTLock-based) Bluetooth smart safes"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.14.2"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest-homeassistant-custom-component==0.13.372",
+    "ttlock-ble==0.3.2",
+    "mypy==2.4.0",
+    "ruff==0.17.1",
+    "pre-commit>=4.3.0",
+    "aiousbwatcher==1.1.2",
+    "serialx==1.11.0",
+    "bluetooth-adapters==2.4.0",
+    "bluetooth-auto-recovery==1.6.4",
+    "dbus-fast==5.0.22",
+    "habluetooth==7.1.2",
+    "bleak==3.0.2",
+    "bleak-retry-connector==4.7.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "--cov=custom_components.populife --cov-report=term-missing --cov-fail-under=90"
+
+[tool.coverage.run]
+branch = true
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ARG001",  # Home Assistant fixes platform/callback signatures
+    "ARG002",
+    "COM812",  # conflicts with the formatter
+    "CPY001",  # no per-file copyright headers
+    "S101",    # asserts narrow types, as in Home Assistant core
+    "D203",    # incompatible with D211
+    "D213",    # incompatible with D212
+    "TC006",   # quoted cast() types read worse
+]
+
+[tool.ruff.lint.per-file-ignores]
+"custom_components/populife/const.py" = ["S105"]  # CONF_* names, not secrets
+"tests/**" = ["PLR0913", "PLR2004", "SLF001", "D", "ANN", "TC"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+combine-as-imports = true
+known-first-party = ["custom_components", "tests"]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "homeassistant",
+    "first-party",
+    "local-folder",
+]
+split-on-trailing-comma = false
+
+[tool.ruff.lint.isort.sections]
+homeassistant = ["homeassistant"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unreachable = true
+explicit_package_bases = true
+files = ["custom_components/populife"]

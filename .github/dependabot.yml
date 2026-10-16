@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Bumps uv.lock; keep the Home Assistant pins (pytest-homeassistant-custom-component
+  # and the bluetooth stack) moving together with each HA release.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      home-assistant:
+        patterns:
+          - "pytest-homeassistant-custom-component"
+          - "aiousbwatcher"
+          - "serialx"
+          - "bleak*"
+          - "bluetooth-*"
+          - "dbus-fast"
+          - "habluetooth"
+      dev-tools:
+        patterns: ["ruff", "mypy", "pre-commit"]
