@@ -9,6 +9,7 @@ an existing entry through the same cloud and manual steps.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -34,6 +35,9 @@ from homeassistant.const import CONF_ADDRESS, CONF_EMAIL, CONF_PASSWORD
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -43,7 +47,9 @@ from .const import (
     CONF_ADMIN_PASSWORD,
     CONF_AES_KEY,
     CONF_BACK,
+    CONF_GROUP_ID,
     CONF_KEY,
+    CONF_ORG_ID,
     CONF_UNLOCK_KEY,
     CONF_VERIFICATION_CODE,
     DEFAULT_GROUP_ID,
@@ -62,6 +68,10 @@ _LOGGER = logging.getLogger(__name__)
 
 _EMAIL_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.EMAIL))
 _PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
+# groupId / orgId are two-byte fields of every command frame's header.
+_FRAME_ID_SELECTOR = NumberSelector(
+    NumberSelectorConfig(min=0, max=0xFFFF, step=1, mode=NumberSelectorMode.BOX)
+)
 
 # Home Assistant flows have no back button, so every form ends with a toggle that returns
 # to the method menu. That is also why the fields are optional in the schema: a user going
@@ -81,6 +91,8 @@ MANUAL_SCHEMA = probatio.Schema(
         probatio.Optional(CONF_AES_KEY): _PASSWORD_SELECTOR,
         probatio.Optional(CONF_UNLOCK_KEY): _PASSWORD_SELECTOR,
         probatio.Optional(CONF_ADMIN_PASSWORD): _PASSWORD_SELECTOR,
+        probatio.Optional(CONF_GROUP_ID): _FRAME_ID_SELECTOR,
+        probatio.Optional(CONF_ORG_ID): _FRAME_ID_SELECTOR,
         **_BACK_FIELD,
     }
 )
@@ -358,14 +370,28 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
             if not errors:
                 assert unlock_key is not None
                 assert admin_password is not None
+                assert self._lock_version is not None
+                self._lock_version = replace(
+                    self._lock_version,
+                    groupId=int(user_input.get(CONF_GROUP_ID, self._lock_version.groupId)),
+                    orgId=int(user_input.get(CONF_ORG_ID, self._lock_version.orgId)),
+                )
                 key = self._manual_key(aes_key, unlock_key, admin_password)
                 if (error := await self._async_check_key(key)) is None:
                     return self._async_create(key)
                 errors["base"] = error
 
+        assert self._lock_version is not None
+        # Prefill the frame ids with what we know: the defaults for a new safe, or the
+        # entry's own ids during reauth and reconfigure.
+        suggested = {
+            CONF_GROUP_ID: self._lock_version.groupId,
+            CONF_ORG_ID: self._lock_version.orgId,
+            **(user_input or {}),
+        }
         return self.async_show_form(
             step_id="manual",
-            data_schema=self.add_suggested_values_to_schema(MANUAL_SCHEMA, user_input),
+            data_schema=self.add_suggested_values_to_schema(MANUAL_SCHEMA, suggested),
             errors=errors,
             description_placeholders={"name": self._name},
         )
