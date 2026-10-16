@@ -27,7 +27,7 @@ from ttlock_ble import (
     TTLockError,
 )
 
-from homeassistant.components import bluetooth
+from homeassistant.components import bluetooth, persistent_notification
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothDataUpdateCoordinator,
 )
@@ -50,6 +50,15 @@ from .const import (
     REFRESH_RETRY_SECONDS,
 )
 from .operation_log import ACTION_UNLOCK, Operation, describe
+from .passcodes import (
+    PASSCODE_MAX_LENGTH,
+    PASSCODE_MIN_LENGTH,
+    TYPE_TIMED,
+    PasscodeBook,
+    PasscodeDraft,
+    conflicts,
+    generate,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
@@ -97,6 +106,8 @@ class PopulifeState:
     # From the operation log.
     last_unlock: dt.datetime | None = None
     last_unlock_method: str | None = None
+    # The name given to the keypad code that opened it last, when it has one.
+    last_unlock_user: str | None = None
 
 
 @dataclass(slots=True)
@@ -186,6 +197,12 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self.has_admin = key.adminPs.isdigit()
         self.state = PopulifeState()
         self.details = PopulifeDetails()
+        # Passcode names (kept by Home Assistant; the safe stores none), the codes the safe
+        # last reported, and the console's form.
+        self.passcodes = PasscodeBook(hass, config_entry.entry_id)
+        self.safe_passcodes: list[dict[str, Any]] = []
+        self.draft = PasscodeDraft()
+        self.draft.reset_window()
         self._client: TTLockClient | None = None
         self._command_lock = asyncio.Lock()
         self._cancel_disconnect: CALLBACK_TYPE | None = None
@@ -210,6 +227,7 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         """Load what the coordinator keeps across restarts."""
         if (stored := await self._store.async_load()) and "time" in stored:
             self._last_record = (str(stored["time"]), int(stored["number"]))
+        await self.passcodes.async_load()
 
     @callback
     @override
@@ -492,7 +510,12 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
 
     async def _async_refresh_passcode_count(self) -> None:
         entries = await self.async_run(lambda client: client.get_passcodes())
-        self.state.passcode_count = len(entries)
+        self._async_set_safe_passcodes([_passcode_dict(entry) for entry in entries])
+
+    @callback
+    def _async_set_safe_passcodes(self, passcodes: list[dict[str, Any]]) -> None:
+        self.safe_passcodes = passcodes
+        self.state.passcode_count = len(passcodes)
         self.async_update_listeners()
 
     # Operation log
@@ -531,7 +554,9 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         await self._async_process_log(entries)
 
     async def _async_process_log(self, entries: list[LogEntry]) -> None:
-        dated = [op for op in map(describe, entries) if op.time is not None]
+        dated = [
+            op for entry in entries if (op := describe(entry, self.passcodes.name)).time is not None
+        ]
         if not dated:
             return
         baseline = self._last_record
@@ -547,6 +572,7 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
             latest = max(unlocks, key=_order)
             self.state.last_unlock = latest.time
             self.state.last_unlock_method = latest.method
+            self.state.last_unlock_user = latest.user
         for operation in new:
             for listener in list(self._operation_listeners):
                 listener(operation)
@@ -564,28 +590,65 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
                 translation_domain=DOMAIN, translation_key="admin_required"
             )
 
+    def known_codes(self) -> set[str]:
+        """Every code Home Assistant knows of: named ones and the ones the safe reported."""
+        return set(self.passcodes.codes) | {str(p["passcode"]) for p in self.safe_passcodes}
+
     async def async_add_passcode(
-        self, code: str, start: dt.datetime | None, end: dt.datetime | None
-    ) -> None:
-        """Add a keypad passcode: permanent, or valid from `start` (default now) to `end`."""
+        self,
+        code: str,
+        start: dt.datetime | None,
+        end: dt.datetime | None,
+        name: str | None = None,
+    ) -> tuple[dt.datetime | None, dt.datetime | None]:
+        """Add a keypad passcode: permanent, or valid from `start` (default now) to `end`.
+
+        Returns the validity window actually used. A temporary code is checked against the
+        safe's own clock, so the clock is synced first, over the same connection.
+        """
         self._require_admin()
+        if not code.isdigit() or not PASSCODE_MIN_LENGTH <= len(code) <= PASSCODE_MAX_LENGTH:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="passcode_invalid"
+            )
+        if conflicts(code, self.known_codes() - {code}):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="passcode_conflict",
+                translation_placeholders={"code": code},
+            )
         if end is None:
             await self.async_run(lambda client: client.add_passcode(code))
-            return
+            await self.passcodes.async_add(code, name, None, None)
+            self._async_note_added(code)
+            return None, None
         begin = _aware(start) if start else dt_util.now()
         end = _aware(end)
         if end <= begin:
             raise ServiceValidationError(
                 translation_domain=DOMAIN, translation_key="passcode_period_invalid"
             )
-        await self.async_run(
-            lambda client: client.add_passcode(
+
+        async def add_timed(client: TTLockClient) -> None:
+            await client.sync_time(local_time=dt_util.now())
+            await client.add_passcode(
                 code,
                 pwd_type=KeyboardPwdType.PERIOD,
                 start_date=_passcode_time(begin),
                 end_date=_passcode_time(end),
             )
-        )
+
+        await self.async_run(add_timed)
+        self.state.clock_drift = 0.0
+        await self.passcodes.async_add(code, name, begin, end)
+        self._async_note_added(code)
+        return begin, end
+
+    @callback
+    def _async_note_added(self, code: str) -> None:
+        if all(str(p["passcode"]) != code for p in self.safe_passcodes):
+            self._async_set_safe_passcodes([*self.safe_passcodes, {"passcode": code}])
+        self.async_update_listeners()
 
     async def async_delete_passcode(self, code: str) -> None:
         """Delete a keypad passcode, whether permanent or time-limited."""
@@ -596,19 +659,98 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
             await self.async_run(
                 lambda client: client.delete_passcode(code, pwd_type=KeyboardPwdType.PERIOD)
             )
+        await self.passcodes.async_remove(code)
+        if self.draft.delete_code == code:
+            self.draft.delete_code = None
+        self._async_set_safe_passcodes(
+            [p for p in self.safe_passcodes if str(p["passcode"]) != code]
+        )
 
     async def async_clear_passcodes(self) -> None:
         """Delete every keypad passcode on the safe."""
         self._require_admin()
         await self.async_run(lambda client: client.clear_passcodes())
+        await self.passcodes.async_clear()
+        self.draft.delete_code = None
+        self._async_set_safe_passcodes([])
 
     async def async_list_passcodes(self) -> list[dict[str, Any]]:
-        """Return the keypad passcodes the safe reports."""
+        """Return the keypad passcodes the safe reports, with the names Home Assistant keeps."""
         self._require_admin()
-        entries = await self.async_run(lambda client: client.get_passcodes())
-        self.state.passcode_count = len(entries)
+        await self._async_refresh_passcode_count()
+        return [{**p, "name": self.passcodes.name(str(p["passcode"]))} for p in self.safe_passcodes]
+
+    def passcode_overview(self) -> list[dict[str, Any]]:
+        """Every known code with its name and validity, for the console's list."""
+        on_safe = {str(p["passcode"]): p for p in self.safe_passcodes}
+        rows: list[dict[str, Any]] = []
+        for code in sorted(self.known_codes()):
+            named = self.passcodes.codes.get(code, {})
+            reported = on_safe.get(code, {})
+            rows.append(
+                {
+                    "name": named.get("name"),
+                    "code": code,
+                    "type": named.get("type") or reported.get("type"),
+                    "start": named.get("start") or reported.get("start"),
+                    "end": named.get("end") or reported.get("end"),
+                    "on_safe": code in on_safe,
+                }
+            )
+        return sorted(rows, key=lambda row: ((row["name"] or "~").lower(), row["code"]))
+
+    # Passcode console
+
+    @callback
+    def async_update_draft(self, **changes: object) -> None:
+        """Change fields of the console's form."""
+        for field_name, value in changes.items():
+            setattr(self.draft, field_name, value)
         self.async_update_listeners()
-        return [_passcode_dict(entry) for entry in entries]
+
+    @callback
+    def async_generate_code(self) -> None:
+        """Fill the form with a random code that clashes with no known code."""
+        self.async_update_draft(code=generate(self.known_codes()))
+
+    async def async_add_draft(self) -> None:
+        """Add the passcode in the console's form and announce it in a notification."""
+        draft = self.draft
+        if not draft.code:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="passcode_missing"
+            )
+        timed = draft.type == TYPE_TIMED
+        if timed and draft.end is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="passcode_period_invalid"
+            )
+        code, name = draft.code, draft.name.strip() or None
+        start, end = await self.async_add_passcode(
+            code, draft.start if timed else None, draft.end if timed else None, name
+        )
+        window = (
+            f"{dt_util.as_local(start):%Y-%m-%d %H:%M} to {dt_util.as_local(end):%Y-%m-%d %H:%M}"
+            if start and end
+            else "permanent"
+        )
+        persistent_notification.async_create(
+            self.hass,
+            f"**{name or 'Unnamed'}**: `{code}` ({window})",
+            title=f"{self.config_entry.title}: passcode added",
+            notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_passcode",
+        )
+        draft.code = draft.name = ""
+        draft.reset_window()
+        self.async_update_listeners()
+
+    async def async_delete_draft(self) -> None:
+        """Delete the passcode picked in the console."""
+        if (code := self.draft.delete_code) is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="passcode_missing"
+            )
+        await self.async_delete_passcode(code)
 
     async def async_list_fingerprints(self) -> list[dict[str, Any]]:
         """Return the enrolled fingerprints: slot and validity."""

@@ -1,0 +1,140 @@
+# Safe admin dashboard for the Populife integration (admin key needed for the passcode parts).
+#
+# 1. Replace every SAFE below with your safe's entity ID prefix: the part after "lock." of its
+#    lock entity (Settings > Devices & services > Populife > your safe > the lock entity).
+#    For example lock.s8534_549605 means SAFE = s8534_549605.
+# 2. Settings > Dashboards > Add dashboard > "New dashboard from scratch", name it "Safe admin",
+#    turn on "Admin only", then open it > edit > ⋮ > Raw configuration editor, paste this file.
+title: Safe admin
+views:
+  - title: Safe
+    path: safe
+    icon: mdi:safe-square-outline
+    type: sections
+    max_columns: 3
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Safe
+            icon: mdi:safe-square-outline
+          - type: tile
+            entity: lock.SAFE
+            grid_options:
+              columns: full
+            features:
+              - type: lock-commands
+          - type: tile
+            entity: sensor.SAFE_battery
+          - type: tile
+            entity: sensor.SAFE_last_unlock
+          - type: tile
+            entity: sensor.SAFE_last_unlocked_by
+          - type: tile
+            entity: sensor.SAFE_last_unlock_method
+          - type: tile
+            entity: button.SAFE_refresh
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.SAFE_refresh
+          - type: tile
+            entity: button.SAFE_sync_clock
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.SAFE_sync_clock
+          - type: tile
+            entity: sensor.SAFE_clock_drift
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: New passcode
+            icon: mdi:dialpad
+          - type: entities
+            grid_options:
+              columns: full
+            entities:
+              - entity: text.SAFE_passcode_name
+                name: Name (who it is for)
+              - entity: text.SAFE_passcode
+                name: Code (4-9 digits)
+              - entity: button.SAFE_generate_passcode
+                name: Generate a random code
+              - entity: select.SAFE_passcode_type
+                name: Type
+              # The window only matters for a temporary code.
+              - type: conditional
+                conditions:
+                  - entity: select.SAFE_passcode_type
+                    state: timed
+                row:
+                  entity: datetime.SAFE_passcode_valid_from
+                  name: Valid from
+              - type: conditional
+                conditions:
+                  - entity: select.SAFE_passcode_type
+                    state: timed
+                row:
+                  entity: datetime.SAFE_passcode_valid_until
+                  name: Valid until
+          - type: tile
+            entity: button.SAFE_add_passcode
+            name: Add passcode
+            color: green
+            grid_options:
+              columns: full
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.SAFE_add_passcode
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Passcodes
+            icon: mdi:account-key-outline
+          - type: markdown
+            grid_options:
+              columns: full
+            content: |
+              {%- set rows = state_attr('sensor.SAFE_passcodes', 'passcodes') or [] %}
+              {%- if rows | count == 0 %}
+              No passcodes yet. Press **Refresh** to read them from the safe.
+              {%- else %}
+              | Name | Code | Type | Valid |
+              |:--|:--|:--|:--|
+              {%- for r in rows %}
+              {%- set temporary = r.type in ['timed', 'period'] %}
+              {%- set start = (as_datetime(r.start) | as_local).strftime('%d.%m %H:%M') if r.start else 'now' %}
+              {%- set until = (as_datetime(r.end) | as_local).strftime('%d.%m %H:%M') if r.end else '' %}
+              {%- set expired = ' (expired)' if r.end and as_datetime(r.end) < now() else '' %}
+              | {{ r.name or '-' }} | `{{ r.code }}` | {{ 'Temporary' if temporary else 'Permanent' }} | {{ (start ~ ' to ' ~ until ~ expired) if r.end else 'always' }} |
+              {%- endfor %}
+              {%- endif %}
+          - type: entities
+            grid_options:
+              columns: full
+            entities:
+              - entity: select.SAFE_passcode_to_delete
+                name: Passcode to delete
+              - entity: button.SAFE_delete_passcode
+                name: Delete it
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Activity
+            icon: mdi:history
+          - type: logbook
+            grid_options:
+              columns: full
+            hours_to_show: 168
+            target:
+              entity_id:
+                - lock.SAFE
+                - event.SAFE_operation

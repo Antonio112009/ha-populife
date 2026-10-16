@@ -16,12 +16,14 @@ if TYPE_CHECKING:
 
 PLATFORMS: list[Platform] = [
     Platform.BUTTON,
+    Platform.DATETIME,
     Platform.EVENT,
     Platform.LOCK,
     Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
+    Platform.TEXT,
 ]
 
 

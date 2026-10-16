@@ -10,6 +10,7 @@ from ttlock_ble import LogOperate
 from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     import datetime as dt
 
     from ttlock_ble import LogEntry
@@ -89,6 +90,8 @@ class Operation:
     time: dt.datetime | None
     battery: int
     credential: str | None
+    # The name Home Assistant keeps for the keypad code used, never the code itself.
+    user: str | None = None
 
     def as_event_data(self) -> dict[str, str | int | None]:
         """Return the attributes of the event fired for this operation."""
@@ -98,6 +101,7 @@ class Operation:
             "time": self.time.isoformat() if self.time else None,
             "battery": self.battery,
             "credential": self.credential,
+            "user": self.user,
         }
 
 
@@ -108,8 +112,13 @@ def _record_type_name(record_type: int) -> str:
         return f"unknown_{record_type}"
 
 
-def describe(entry: LogEntry) -> Operation:
-    """Return how and what was done in `entry`, with its time in Home Assistant's zone."""
+def describe(
+    entry: LogEntry, name_of: Callable[[str | None], str | None] | None = None
+) -> Operation:
+    """Return how and what was done in `entry`, with its time in Home Assistant's zone.
+
+    `name_of` maps a keypad code to the name Home Assistant keeps for it.
+    """
     record_type = int(entry.record_type)
     name = _record_type_name(record_type)
     if record_type in _UNLOCKS:
@@ -136,4 +145,5 @@ def describe(entry: LogEntry) -> Operation:
         time=time,
         battery=entry.lock_battery,
         credential=entry.password if method in _SHOW_CREDENTIAL else None,
+        user=name_of(entry.password) if name_of and method == METHOD_KEYPAD else None,
     )

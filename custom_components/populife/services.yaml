@@ -15,6 +15,10 @@ add_passcode:
     end:
       selector:
         datetime:
+    name:
+      example: "Guest, 7-9 November"
+      selector:
+        text:
 
 delete_passcode:
   target:

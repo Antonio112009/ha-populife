@@ -300,7 +300,7 @@ async def test_add_passcodes(
         "1357", pwd_type=KeyboardPwdType.PERIOD, start_date="2611010900", end_date="2611021830"
     )
 
-    with pytest.raises(ServiceValidationError, match="later than its start"):
+    with pytest.raises(ServiceValidationError, match="later than"):
         await _passcode(
             hass, "add_passcode", code="1357", start="2026-11-02 09:00:00", end="2026-11-01 09:00"
         )
@@ -356,7 +356,13 @@ async def test_list_passcodes(
     ]
     response = await _passcode(hass, "list_passcodes")
     passcodes = response[LOCK_ENTITY]["passcodes"]
-    assert passcodes[0] == {"passcode": "482916", "type": "permanent", "start": None, "end": None}
+    assert passcodes[0] == {
+        "passcode": "482916",
+        "type": "permanent",
+        "start": None,
+        "end": None,
+        "name": None,
+    }
     assert passcodes[1]["type"] == "period"
     assert passcodes[1]["start"].startswith("2026-11-01T09:00:00")
 

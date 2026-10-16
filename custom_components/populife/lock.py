@@ -28,6 +28,7 @@ PARALLEL_UPDATES = 0
 ATTR_CODE: Final = "code"
 ATTR_START: Final = "start"
 ATTR_END: Final = "end"
+ATTR_NAME: Final = "name"
 SERVICE_ADD_PASSCODE: Final = "add_passcode"
 SERVICE_DELETE_PASSCODE: Final = "delete_passcode"
 SERVICE_CLEAR_PASSCODES: Final = "clear_passcodes"
@@ -53,6 +54,7 @@ async def async_setup_entry(
             probatio.Required(ATTR_CODE): _CODE,
             probatio.Optional(ATTR_START): cv.datetime,
             probatio.Optional(ATTR_END): cv.datetime,
+            probatio.Optional(ATTR_NAME): cv.string,
         },
         "async_add_passcode",
     )
@@ -112,10 +114,14 @@ class PopulifeLock(PopulifeEntity, LockEntity):
         await self.coordinator.async_unlock()
 
     async def async_add_passcode(
-        self, code: str, start: dt.datetime | None = None, end: dt.datetime | None = None
+        self,
+        code: str,
+        start: dt.datetime | None = None,
+        end: dt.datetime | None = None,
+        name: str | None = None,
     ) -> None:
-        """Add a keypad passcode, permanent unless `end` is given."""
-        await self.coordinator.async_add_passcode(code, start, end)
+        """Add a keypad passcode, permanent unless `end` is given, optionally named."""
+        await self.coordinator.async_add_passcode(code, start, end, name)
 
     async def async_delete_passcode(self, code: str) -> None:
         """Delete a keypad passcode."""
