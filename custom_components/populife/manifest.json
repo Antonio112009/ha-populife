@@ -7,13 +7,13 @@
       "connectable": true
     }
   ],
-  "codeowners": ["@arredvault"],
+  "codeowners": ["@Antonio112009"],
   "config_flow": true,
   "dependencies": ["bluetooth_adapters"],
-  "documentation": "https://github.com/arredvault/ha-populife",
+  "documentation": "https://github.com/Antonio112009/ha-populife",
   "integration_type": "device",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/arredvault/ha-populife/issues",
+  "issue_tracker": "https://github.com/Antonio112009/ha-populife/issues",
   "loggers": ["ttlock_ble"],
   "requirements": ["ttlock-ble==0.3.2"],
   "version": "0.1.0"
