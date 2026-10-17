@@ -47,6 +47,18 @@ hassfest (needs Docker): `docker run --rm -v "$PWD":/github/workspace ghcr.io/ho
 - `ttlock-ble` is pinned in both `pyproject.toml` and `manifest.json` `requirements` (what users
   get installed); the same check requires them to match. Changing the manifest needs a version bump.
 
+## Panel (frontend)
+
+- Sources in `frontend/` (TypeScript 6, Lit 3, Vite 8, Vitest, ESLint strict); the build goes to
+  `custom_components/populife/frontend/populife-panel.js` and **must be committed**: CI rebuilds
+  it and fails on any difference. After changing `frontend/src`, run `npm run build` in `frontend/`.
+- Style only with Home Assistant's CSS variables; don't depend on HA's internal components
+  (they change between releases), except `ha-icon` and `ha-menu-button`.
+- Data comes from `populife/*` websocket commands (`websocket.py`), entity states, and
+  `history/history_during_period`; every action goes through entity services, which check access.
+- Check UI changes in the dev harness: `npm run dev`, then `/dev/index.html?dark=1&ru=1&narrow=1`.
+- A panel change that ships to users changes `custom_components/`, so it needs a version bump.
+
 ## Conventions
 
 - Python 3.14 and Home Assistant 2026.10+. Flow schemas use `probatio`, not `voluptuous`.

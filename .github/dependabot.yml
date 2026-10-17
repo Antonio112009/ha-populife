@@ -27,3 +27,15 @@ updates:
     groups:
       dev-tools:
         patterns: ["ruff", "mypy", "pre-commit"]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      frontend:
+        patterns: ["*"]
+    ignore:
+      # typescript-eslint supports TypeScript only up to 6.0 so far.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]

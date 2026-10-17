@@ -51,6 +51,30 @@ jobs:
             | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')
           python3 scripts/bump_version.py --check "$base"
 
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: The committed panel matches the sources
+        run: |
+          if ! git diff --exit-code -- ../custom_components/populife/frontend; then
+            echo "::error::Rebuild the panel: cd frontend && npm run build, then commit the result."
+            exit 1
+          fi
+
   test:
     name: Tests
     runs-on: ubuntu-latest

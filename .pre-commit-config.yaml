@@ -1,3 +1,5 @@
+# The built panel is generated; CI checks it matches the sources instead.
+exclude: ^custom_components/populife/frontend/
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.1

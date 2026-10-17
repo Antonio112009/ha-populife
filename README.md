@@ -46,6 +46,28 @@ safe. Remote access then goes through your Home Assistant instance.
 - **Modern stack.** Built for Home Assistant 2026.10 on Python 3.14, with strict typing, about
   99% test coverage, and hassfest, HACS and CodeQL checks on every commit.
 
+## The Safe panel
+
+The integration adds a **Safe** page to the sidebar: the safe's state with a big lock / unlock
+button, its passcodes by name, a week of activity, and the enrolled fingerprints.
+
+| Light | Dark, in Russian | Phone |
+| :---: | :---: | :---: |
+| ![Safe panel](docs/screenshots/panel-light.png) | ![Safe panel, dark](docs/screenshots/panel-dark-ru.png) | ![Safe panel on a phone](docs/screenshots/panel-mobile.png) |
+
+- **Unlock with a confirmation**, lock with one tap; the state follows the safe live.
+- **Passcodes**: masked until you reveal them, with copy/share for a guest and delete. **Add
+  passcode** opens a form with a name, a generated or typed code (prefix clashes are caught as
+  you type), and a permanent / temporary switch with a calendar for the window.
+- **Activity**: who opened it and how (keypad, fingerprint, app, card), failed attempts and
+  alarms, with filters.
+- **Battery, signal and clock drift**, with **Sync clock** when the safe's clock is off by a
+  minute or more.
+- Follows your Home Assistant theme, light or dark, and your language (English or Russian).
+
+Only admins and allowed users see the controls and full passcodes; everyone else sees an
+explanation. The panel runs every action through the same checks as the entities.
+
 ## How it works
 
 ```mermaid
@@ -279,6 +301,7 @@ logger:
 - [x] Low-battery repair issue
 - [x] Passcode console with names, temporary windows, "unlocked by" and an admin dashboard
 - [x] Access control: admins and allowed users only, masked passcodes for everyone else
+- [x] Safe panel in the sidebar: state, passcodes, activity and fingerprints in one place
 - [x] Metrics read from the safe: clock drift, fingerprint and passcode counts, features and
       properties, volume, refresh button
 - [ ] Optional [Populife Open API](https://open.populife.co/doc/index_en.html) support:
@@ -292,6 +315,18 @@ logger:
 uv sync
 uv run pre-commit install
 uv run pytest
+```
+
+The panel lives in [`frontend/`](frontend) (TypeScript, Lit, Vite) and is built into
+`custom_components/populife/frontend/populife-panel.js`, which is committed so HACS installs it
+with the integration. CI fails if the committed build doesn't match the sources.
+
+```bash
+cd frontend
+npm ci
+npm run dev    # the panel against a mocked Home Assistant, at /dev/index.html
+npm test
+npm run build  # rebuild the panel, then commit the result
 ```
 
 | Check | Tooling |

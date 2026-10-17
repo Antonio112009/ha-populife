@@ -16,11 +16,29 @@
       "problemMatcher": []
     },
     {
+      "label": "Build panel",
+      "detail": "Rebuild custom_components/populife/frontend/populife-panel.js from frontend/",
+      "type": "shell",
+      "command": "npm --prefix frontend run build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Panel dev server",
+      "detail": "The panel against a mocked Home Assistant",
+      "type": "shell",
+      "command": "npm --prefix frontend run dev",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
       "label": "Run all checks",
       "detail": "ruff, mypy and pytest, as in CI",
       "type": "shell",
       "command": "uv run ruff format --check . && uv run ruff check . && uv run mypy && uv run pytest",
-      "group": { "kind": "test", "isDefault": true },
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
       "problemMatcher": []
     }
   ],
@@ -30,9 +48,18 @@
       "type": "pickString",
       "description": "Which part of the version to raise?",
       "options": [
-        { "label": "patch: bug fix", "value": "patch" },
-        { "label": "minor: new feature", "value": "minor" },
-        { "label": "major: breaking change", "value": "major" }
+        {
+          "label": "patch: bug fix",
+          "value": "patch"
+        },
+        {
+          "label": "minor: new feature",
+          "value": "minor"
+        },
+        {
+          "label": "major: breaking change",
+          "value": "major"
+        }
       ],
       "default": "patch"
     }
