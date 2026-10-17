@@ -53,6 +53,7 @@ class PopulifeRefreshButton(PopulifeEntity, ButtonEntity):
     @override
     async def async_press(self) -> None:
         """Connect and read everything."""
+        await self.async_check_access()
         await self.coordinator.async_refresh_all()
 
 
@@ -65,6 +66,7 @@ class PopulifeSyncTimeButton(PopulifeEntity, ButtonEntity):
     @override
     async def async_press(self) -> None:
         """Sync the clock to Home Assistant's local time."""
+        await self.async_check_access()
         drift = await self.coordinator.async_sync_time()
         _LOGGER.debug("%s: clock was off by %+.1f s", self.coordinator.address, drift)
 
@@ -82,6 +84,7 @@ class PopulifeConsoleButton(PopulifeEntity, ButtonEntity):
     @override
     async def async_press(self) -> None:
         """Run the action."""
+        await self.async_check_access()
         match self._action:
             case "passcode_generate":
                 self.coordinator.async_generate_code()

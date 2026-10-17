@@ -44,11 +44,13 @@ class PopulifeLockSoundSwitch(PopulifeEntity, SwitchEntity):
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the beep on."""
+        await self.async_check_access()
         await self.coordinator.async_set_lock_sound(enabled=True)
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the beep off."""
+        await self.async_check_access()
         await self.coordinator.async_set_lock_sound(enabled=False)
 
     @override

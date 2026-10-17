@@ -46,6 +46,7 @@ select = ["ALL"]
 ignore = [
     "ARG001",  # Home Assistant fixes platform/callback signatures
     "ARG002",
+    "ARG004",  # Home Assistant fixes static hook signatures (async_get_options_flow)
     "COM812",  # conflicts with the formatter
     "CPY001",  # no per-file copyright headers
     "S101",    # asserts narrow types, as in Home Assistant core

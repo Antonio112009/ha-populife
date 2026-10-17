@@ -120,6 +120,22 @@
       "reconfigure_successful": "Re-configuration was successful"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Who may operate the safe",
+        "description": "Home Assistant lets every user operate every device, so the safe checks for itself. Admins can always lock, unlock and manage passcodes; pick the other people who may too. Automations are not restricted.",
+        "data": {
+          "allowed_users": "Allowed users",
+          "show_passcodes": "Show full passcodes"
+        },
+        "data_description": {
+          "allowed_users": "People who are not admins but may lock, unlock and manage passcodes from Home Assistant.",
+          "show_passcodes": "Every Home Assistant user can read entity states. When off, the passcode list, the delete picker and the notification show only the last two digits."
+        }
+      }
+    }
+  },
   "entity": {
     "button": {
       "sync_time": {

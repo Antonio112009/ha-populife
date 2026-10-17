@@ -58,4 +58,5 @@ class PopulifeValidityDateTime(PopulifeEntity, DateTimeEntity):
     @override
     async def async_set_value(self, value: dt.datetime) -> None:
         """Set the time; the picker works in Home Assistant's time zone."""
+        await self.async_check_access()
         self.coordinator.async_update_draft(**{self._field: dt_util.as_local(value)})

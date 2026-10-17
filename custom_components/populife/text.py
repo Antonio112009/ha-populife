@@ -56,6 +56,7 @@ class PopulifePasscodeNameText(PopulifeConsoleText):
     @override
     async def async_set_value(self, value: str) -> None:
         """Set the name."""
+        await self.async_check_access()
         self.coordinator.async_update_draft(name=value)
 
 
@@ -76,4 +77,5 @@ class PopulifePasscodeCodeText(PopulifeConsoleText):
     @override
     async def async_set_value(self, value: str) -> None:
         """Set the code."""
+        await self.async_check_access()
         self.coordinator.async_update_draft(code=value)

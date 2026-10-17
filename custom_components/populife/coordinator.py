@@ -41,6 +41,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     BATTERY_OK_LEVEL,
+    CONF_SHOW_PASSCODES,
     DISCONNECT_DELAY_SECONDS,
     DOMAIN,
     KEEP_ALIVE_SECONDS,
@@ -58,6 +59,7 @@ from .passcodes import (
     PasscodeDraft,
     conflicts,
     generate,
+    mask,
 )
 
 if TYPE_CHECKING:
@@ -680,8 +682,18 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         await self._async_refresh_passcode_count()
         return [{**p, "name": self.passcodes.name(str(p["passcode"]))} for p in self.safe_passcodes]
 
-    def passcode_overview(self) -> list[dict[str, Any]]:
-        """Every known code with its name and validity, for the console's list."""
+    def public_code(self, code: str) -> str:
+        """Return `code` as every Home Assistant user may see it: in full, or masked."""
+        if self.config_entry.options.get(CONF_SHOW_PASSCODES, False):
+            return code
+        return mask(code)
+
+    def passcode_overview(self, *, public: bool = False) -> list[dict[str, Any]]:
+        """Every known code with its name and validity, for the console's list.
+
+        `public` rows end up where every Home Assistant user can read them (entity
+        attributes), so their codes go through `public_code`.
+        """
         on_safe = {str(p["passcode"]): p for p in self.safe_passcodes}
         rows: list[dict[str, Any]] = []
         for code in sorted(self.known_codes()):
@@ -690,7 +702,7 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
             rows.append(
                 {
                     "name": named.get("name"),
-                    "code": code,
+                    "code": self.public_code(code) if public else code,
                     "type": named.get("type") or reported.get("type"),
                     "start": named.get("start") or reported.get("start"),
                     "end": named.get("end") or reported.get("end"),
@@ -736,7 +748,7 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         )
         persistent_notification.async_create(
             self.hass,
-            f"**{name or 'Unnamed'}**: `{code}` ({window})",
+            f"**{name or 'Unnamed'}**: `{self.public_code(code)}` ({window})",
             title=f"{self.config_entry.title}: passcode added",
             notification_id=f"{DOMAIN}_{self.config_entry.entry_id}_passcode",
         )
