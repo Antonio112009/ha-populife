@@ -37,7 +37,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: PopulifeConfigEntry) -> 
     # Start listening only once the entities exist, so the first advertisement
     # reaches them.
     entry.async_on_unload(coordinator.async_start())
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: PopulifeConfigEntry) -> None:
+    """Show or mask the passcodes at once when the options change."""
+    entry.runtime_data.async_update_listeners()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: PopulifeConfigEntry) -> bool:

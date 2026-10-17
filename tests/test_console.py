@@ -77,7 +77,9 @@ async def test_add_permanent_named_code(
     mock_client.sync_time.assert_not_awaited()
     notification = next(iter(_notifications(hass).values()))
     assert "Mama" in notification["message"]
-    assert "482916" in notification["message"]
+    # Codes are masked by default: everyone can read notifications and states.
+    assert "`****16`" in notification["message"]
+    assert "482916" not in notification["message"]
     assert "permanent" in notification["message"]
     assert hass.states.get(NAME).state == ""
     assert hass.states.get(CODE).state == ""
@@ -86,14 +88,14 @@ async def test_add_permanent_named_code(
     assert rows == [
         {
             "name": "Mama",
-            "code": "482916",
+            "code": "****16",
             "type": "permanent",
             "start": None,
             "end": None,
             "on_safe": True,
         }
     ]
-    assert hass.states.get(DELETE_PICK).attributes["options"] == ["Mama (482916)"]
+    assert hass.states.get(DELETE_PICK).attributes["options"] == ["Mama (****16)"]
     assert "passcodes" in PopulifeSensor._unrecorded_attributes
 
 
@@ -172,16 +174,16 @@ async def test_delete_by_name(
     await coordinator.async_add_passcode("482916", None, None, "Mama")
     await coordinator.async_add_passcode("7319", None, None)
     await hass.async_block_till_done()
-    assert hass.states.get(DELETE_PICK).attributes["options"] == ["Mama (482916)", "7319"]
+    assert hass.states.get(DELETE_PICK).attributes["options"] == ["Mama (****16)", "**19"]
 
     await _call(
-        hass, SELECT_DOMAIN, SERVICE_SELECT_OPTION, entity_id=DELETE_PICK, option="Mama (482916)"
+        hass, SELECT_DOMAIN, SERVICE_SELECT_OPTION, entity_id=DELETE_PICK, option="Mama (****16)"
     )
-    assert hass.states.get(DELETE_PICK).state == "Mama (482916)"
+    assert hass.states.get(DELETE_PICK).state == "Mama (****16)"
     await _press(hass, DELETE)
     mock_client.delete_passcode.assert_awaited_once_with("482916")
     assert coordinator.passcodes.name("482916") is None
-    assert hass.states.get(DELETE_PICK).attributes["options"] == ["7319"]
+    assert hass.states.get(DELETE_PICK).attributes["options"] == ["**19"]
     assert hass.states.get(DELETE_PICK).state == "unknown"
 
     await _call(hass, DOMAIN, "clear_passcodes", entity_id="lock.office_safe")
@@ -215,8 +217,8 @@ async def test_names_survive_restart_and_merge_with_safe(
     assert listed == {"482916": "Mama", "2580": None}
     rows = hass.states.get(PASSCODES).attributes["passcodes"]
     assert [(r["name"], r["code"], r["on_safe"]) for r in rows] == [
-        ("Mama", "482916", True),
-        (None, "2580", True),
+        ("Mama", "****16", True),
+        (None, "**80", True),
     ]
     assert rows[1]["type"] == "period"
 

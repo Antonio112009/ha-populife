@@ -59,6 +59,7 @@ class PopulifeAutoLockNumber(PopulifeEntity, NumberEntity):
     @override
     async def async_set_native_value(self, value: float) -> None:
         """Set the delay on the safe."""
+        await self.async_check_access()
         seconds = int(value)
         limits = self.coordinator.state.auto_lock_limits
         # 0 (off) sits outside the firmware's range and is always accepted.

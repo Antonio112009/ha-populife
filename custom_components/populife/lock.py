@@ -106,11 +106,13 @@ class PopulifeLock(PopulifeEntity, LockEntity):
     @override
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the safe."""
+        await self.async_check_access()
         await self.coordinator.async_lock()
 
     @override
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the safe."""
+        await self.async_check_access()
         await self.coordinator.async_unlock()
 
     async def async_add_passcode(
@@ -121,22 +123,27 @@ class PopulifeLock(PopulifeEntity, LockEntity):
         name: str | None = None,
     ) -> None:
         """Add a keypad passcode, permanent unless `end` is given, optionally named."""
+        await self.async_check_access()
         await self.coordinator.async_add_passcode(code, start, end, name)
 
     async def async_delete_passcode(self, code: str) -> None:
         """Delete a keypad passcode."""
+        await self.async_check_access()
         await self.coordinator.async_delete_passcode(code)
 
     async def async_clear_passcodes(self) -> None:
         """Delete every keypad passcode."""
+        await self.async_check_access()
         await self.coordinator.async_clear_passcodes()
 
     async def async_list_passcodes(self) -> ServiceResponse:
         """Return the keypad passcodes the safe reports."""
+        await self.async_check_access()
         passcodes = await self.coordinator.async_list_passcodes()
         return {"passcodes": cast("list[JsonValueType]", passcodes)}
 
     async def async_list_fingerprints(self) -> ServiceResponse:
         """Return the enrolled fingerprints: slot and validity."""
+        await self.async_check_access()
         fingerprints = await self.coordinator.async_list_fingerprints()
         return {"fingerprints": cast("list[JsonValueType]", fingerprints)}

@@ -30,14 +30,20 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    OptionsFlow,
 )
 from homeassistant.const import CONF_ADDRESS, CONF_EMAIL, CONF_PASSWORD
+from homeassistant.core import callback
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -46,12 +52,14 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ADMIN_PASSWORD,
     CONF_AES_KEY,
+    CONF_ALLOWED_USERS,
     CONF_BACK,
     CONF_FLAG_POS,
     CONF_GROUP_ID,
     CONF_KEY,
     CONF_LOCK_DATA,
     CONF_ORG_ID,
+    CONF_SHOW_PASSCODES,
     CONF_UNLOCK_KEY,
     CONF_VERIFICATION_CODE,
     DEFAULT_GROUP_ID,
@@ -127,6 +135,12 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Populife."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> PopulifeOptionsFlow:
+        """Return the options flow: who may operate the safe, and whether codes show."""
+        return PopulifeOptionsFlow()
 
     def __init__(self) -> None:
         """Initialize the flow."""
@@ -476,4 +490,31 @@ class PopulifeConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=key.lockAlias or key.lockName or self._name,
             data={CONF_ADDRESS: self._address, CONF_KEY: key.to_dict()},
+        )
+
+
+class PopulifeOptionsFlow(OptionsFlow):
+    """Pick who besides admins may operate the safe, and whether full codes show."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Show and save the options."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        # Admins may always operate the safe, so only the other people are offered.
+        users = [
+            SelectOptionDict(value=user.id, label=user.name or user.id)
+            for user in await self.hass.auth.async_get_users()
+            if not user.system_generated and user.is_active and not user.is_admin
+        ]
+        schema = probatio.Schema(
+            {
+                probatio.Optional(CONF_ALLOWED_USERS, default=[]): SelectSelector(
+                    SelectSelectorConfig(options=users, multiple=True, mode=SelectSelectorMode.LIST)
+                ),
+                probatio.Optional(CONF_SHOW_PASSCODES, default=False): BooleanSelector(),
+            }
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(schema, self.config_entry.options),
         )

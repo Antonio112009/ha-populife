@@ -77,6 +77,7 @@ class PopulifeVolumeSelect(PopulifeEntity, SelectEntity):
     @override
     async def async_select_option(self, option: str) -> None:
         """Set the volume."""
+        await self.async_check_access()
         await self.coordinator.async_set_lock_volume(LockVolume[option.upper()])
 
 
@@ -96,6 +97,7 @@ class PopulifePasscodeTypeSelect(PopulifeEntity, SelectEntity):
     @override
     async def async_select_option(self, option: str) -> None:
         """Set the type."""
+        await self.async_check_access()
         self.coordinator.async_update_draft(type=option)
 
 
@@ -106,11 +108,20 @@ class PopulifePasscodeDeleteSelect(PopulifeEntity, SelectEntity):
     _attr_entity_category = EntityCategory.CONFIG
 
     def _labels(self) -> dict[str, str]:
-        """Return {label: code}, labelling each code with its name when it has one."""
-        return {
-            f"{row['name']} ({row['code']})" if row["name"] else row["code"]: row["code"]
-            for row in self.coordinator.passcode_overview()
-        }
+        """Return {label: code}, labelling each code with its name when it has one.
+
+        Labels show the code as every user may see it, so masked codes can repeat; a
+        number keeps each label unique.
+        """
+        labels: dict[str, str] = {}
+        for row in self.coordinator.passcode_overview():
+            shown = self.coordinator.public_code(row["code"])
+            label = base = f"{row['name']} ({shown})" if row["name"] else shown
+            number = 2
+            while label in labels:
+                label, number = f"{base} #{number}", number + 1
+            labels[label] = row["code"]
+        return labels
 
     @property
     @override
@@ -128,4 +139,5 @@ class PopulifePasscodeDeleteSelect(PopulifeEntity, SelectEntity):
     @override
     async def async_select_option(self, option: str) -> None:
         """Pick a passcode."""
+        await self.async_check_access()
         self.coordinator.async_update_draft(delete_code=self._labels()[option])

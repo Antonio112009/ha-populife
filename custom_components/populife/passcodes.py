@@ -61,6 +61,11 @@ def conflicts(code: str, others: Iterable[str]) -> bool:
     return any(code.startswith(other) or other.startswith(code) for other in others)
 
 
+def mask(code: str) -> str:
+    """Hide all but the last two digits of `code`."""
+    return "*" * (len(code) - 2) + code[-2:]
+
+
 def generate(others: Iterable[str], length: int = GENERATED_LENGTH) -> str:
     """Return a random code that doesn't clash with `others`."""
     taken = list(others)

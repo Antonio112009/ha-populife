@@ -57,3 +57,11 @@ BATTERY_OK_LEVEL: Final = 25
 REFRESH_RETRY_SECONDS: Final = 300.0
 # At most one connection per this interval to fetch log records the safe flags as new.
 LOG_SYNC_MIN_INTERVAL_SECONDS: Final = 60.0
+
+# Options. Admins can always operate the safe through Home Assistant; these users may too.
+CONF_ALLOWED_USERS: Final = "allowed_users"
+# Whether full passcodes show in states, labels and notifications, which every Home Assistant
+# user can read. Off: only the last two digits show.
+CONF_SHOW_PASSCODES: Final = "show_passcodes"
+# Fired when someone who may not operate the safe tries to.
+EVENT_ACCESS_DENIED: Final = f"{DOMAIN}_access_denied"

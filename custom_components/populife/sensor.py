@@ -127,7 +127,7 @@ SENSORS: tuple[PopulifeSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda state: state.passcode_count,
         admin_only=True,
-        attributes_fn=lambda coordinator: {"passcodes": coordinator.passcode_overview()},
+        attributes_fn=lambda coordinator: {"passcodes": coordinator.passcode_overview(public=True)},
     ),
 )
 

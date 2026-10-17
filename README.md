@@ -114,6 +114,28 @@ password) you also get:
 
 These settings are read right after startup, or on demand with `homeassistant.update_entity`.
 
+### Who may operate the safe
+
+Home Assistant lets every logged-in user operate every entity, which isn't good enough for a
+safe. So the safe checks for itself on every action: lock, unlock, the passcode actions and
+console, and every setting.
+
+- **Admins** may always operate it.
+- **Allowed users**, picked in **Settings → Devices & services → Populife → Configure**, may too.
+- **Automations** and Home Assistant itself aren't restricted. A script started by a user runs
+  as that user, so it is checked.
+- **Anyone else** gets *Unauthorized*. A warning is logged and a `populife_access_denied`
+  event fires with `entity_id`, `user_id` and `name`, so you can notify yourself about it.
+  This includes system users such as Home Assistant Cloud (voice assistants) unless you
+  allow them.
+
+Every user can still read states, so passcodes are **masked** wherever states show them: the
+passcode list attribute, the "passcode to delete" picker and the "passcode added" notification
+show only the last two digits (`****16`). Turn on **Show full passcodes** in the options to show
+them in full. `populife.list_passcodes` always returns full codes and is restricted like
+everything else. While a new code is typed into the console, the **Passcode** field holds it
+until **Add passcode** is pressed.
+
 ### Passcode console (admin key)
 
 The device page gets a small form for keypad passcodes, so codes can be managed from
@@ -256,6 +278,7 @@ logger:
 - [x] State, device info and settings read after startup
 - [x] Low-battery repair issue
 - [x] Passcode console with names, temporary windows, "unlocked by" and an admin dashboard
+- [x] Access control: admins and allowed users only, masked passcodes for everyone else
 - [x] Metrics read from the safe: clock drift, fingerprint and passcode counts, features and
       properties, volume, refresh button
 - [ ] Optional [Populife Open API](https://open.populife.co/doc/index_en.html) support:
