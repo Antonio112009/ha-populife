@@ -10,8 +10,14 @@ import {
   type ActivityFilter,
   METHOD_ICONS,
   batteryLevel,
+  countBy,
+  dayName,
+  groupByDay,
+  hueFor,
+  initials,
   lastUsed,
   signalQuality,
+  windowProgress,
   formatDateTime,
   mask,
   matchesFilter,
@@ -246,11 +252,14 @@ export class PopulifeSafeView extends LitElement {
   override render() {
     return html`
       <div class="layout ${this.narrow ? "narrow" : ""}">
-        ${this.renderStatus()}
+        ${this.renderHero()}
         ${
           this.safe.can_operate
             ? html`${this.renderPasscodes()} ${this.renderActivity()} ${this.renderFingerprints()}`
-            : html`<div class="card wide muted">${this.t("no_access")}</div>`
+            : html`<div class="card wide empty">
+                <ha-icon icon="mdi:shield-lock-outline"></ha-icon>
+                <p>${this.t("no_access")}</p>
+              </div>`
         }
       </div>
       <populife-passcode-dialog
@@ -278,13 +287,15 @@ export class PopulifeSafeView extends LitElement {
     `;
   }
 
-  private renderStatus() {
+  // Hero: state, the hold-to-unlock button, and the safe's vitals as tiles.
+
+  private renderHero() {
     const t = this.t;
-    const lock = this.entity("lock");
-    const state = lock?.state ?? "unavailable";
+    const state = this.entity("lock")?.state ?? "unavailable";
     const locked = state === "locked";
     const moving = state === "locking" || state === "unlocking";
     const reachable = state !== "unavailable";
+    const tone = locked ? "locked" : reachable ? "open" : "gone";
     const stateLabel =
       state === "locked" || state === "unlocked" || state === "locking" || state === "unlocking"
         ? t(state)
@@ -292,47 +303,49 @@ export class PopulifeSafeView extends LitElement {
           ? t("unknown")
           : t("unavailable");
     return html`
-      <section class="card wide hero ${locked ? "is-locked" : reachable ? "is-open" : "is-gone"}">
-        <div class="hero-text">
-          <div class="title-row">
-            <h2>${this.safe.title}</h2>
-            ${
-              this.safe.can_operate && this.safe.entities.refresh
-                ? html`<button
-                    class="icon"
-                    title=${t("refresh")}
-                    aria-label=${t("refresh")}
-                    ?disabled=${this._busy !== null}
-                    @click=${() => void this.press("refresh")}
-                  >
-                    <ha-icon icon="mdi:refresh"></ha-icon>
-                  </button>`
-                : nothing
-            }
-          </div>
-          <div class="state">
+      <section class="card wide hero tone-${tone}">
+        <div class="hero-main">
+          <div class="hero-badge">
             <ha-icon
               icon=${locked ? "mdi:lock" : reachable ? "mdi:lock-open-variant" : "mdi:lock-question"}
             ></ha-icon>
-            ${stateLabel}
           </div>
-          <div class="muted">${this.renderLastOpened()}</div>
-          <div class="chips">${this.renderChips()}</div>
+          <div class="hero-text">
+            <div class="eyebrow">
+              <span>${this.safe.title}</span>
+              ${
+                this.safe.can_operate && this.safe.entities.refresh
+                  ? html`<button
+                      class="icon ghost"
+                      title=${t("refresh")}
+                      aria-label=${t("refresh")}
+                      ?disabled=${this._busy !== null}
+                      @click=${() => void this.press("refresh")}
+                    >
+                      <ha-icon icon="mdi:refresh"></ha-icon>
+                    </button>`
+                  : nothing
+              }
+            </div>
+            <div class="state">${stateLabel}</div>
+            <div class="last">${this.renderLastOpened()}</div>
+          </div>
+          ${
+            this.safe.can_operate
+              ? html`<populife-hold-button
+                  class="action ${locked ? "" : "attention"}"
+                  icon=${locked ? "mdi:lock-open-variant" : "mdi:lock"}
+                  label=${locked ? t("unlock") : t("lock")}
+                  hint=${locked ? t("hold_to_unlock") : t("tap_to_lock")}
+                  ?hold=${locked}
+                  ?disabled=${!reachable || moving}
+                  ?busy=${this._busy === "lock" || moving}
+                  @activate=${() => void this.setLocked(!locked)}
+                ></populife-hold-button>`
+              : nothing
+          }
         </div>
-        ${
-          this.safe.can_operate
-            ? html`<populife-hold-button
-                class="action"
-                icon=${locked ? "mdi:lock-open-variant" : "mdi:lock"}
-                label=${locked ? t("unlock") : t("lock")}
-                hint=${locked ? t("hold_to_unlock") : t("tap_to_lock")}
-                ?hold=${locked}
-                ?disabled=${!reachable || moving}
-                ?busy=${this._busy === "lock" || moving}
-                @activate=${() => void this.setLocked(!locked)}
-              ></populife-hold-button>`
-            : nothing
-        }
+        <div class="stats">${this.renderStats()}</div>
       </section>
     `;
   }
@@ -345,77 +358,115 @@ export class PopulifeSafeView extends LitElement {
     }
     const by = this.entity("last_unlocked_by")?.state;
     const method = this.entity("last_unlock_method")?.state;
-    const parts = [relativeTime(new Date(lastUnlock), new Date(), this.language)];
-    if (by && by !== "unknown" && by !== "unavailable") parts.push(by);
-    if (method && method in METHOD_ICONS) {
-      parts.push(method === "app" && by ? t("via_ha") : t(methodKey(method)));
-    }
-    return html`${t("last_unlock")}: ${parts.join(" · ")}`;
+    const known = by && by !== "unknown" && by !== "unavailable" ? by : null;
+    const how =
+      method && method in METHOD_ICONS
+        ? method === "app" && known
+          ? t("via_ha")
+          : t(methodKey(method))
+        : null;
+    return html`
+      <ha-icon icon="mdi:history"></ha-icon>
+      <span>${relativeTime(new Date(lastUnlock), new Date(), this.language)}</span>
+      ${known ? html`${avatar(known, "xs")}<b>${known}</b>` : nothing}
+      ${how ? html`<span class="dot">·</span><span>${how}</span>` : nothing}
+    `;
   }
 
-  private renderChips() {
+  private renderStats() {
     const t = this.t;
-    const chips = [];
+    const tiles = [];
     const battery = Number(this.entity("battery")?.state);
     if (!Number.isNaN(battery)) {
       const level = batteryLevel(battery);
-      const icon =
-        level === "bad" ? "mdi:battery-alert" : level === "warn" ? "mdi:battery-30" : "mdi:battery";
-      chips.push(
-        html`<span class="chip ${level}"><ha-icon icon=${icon}></ha-icon>${battery}%</span>`,
+      tiles.push(
+        html`<div class="stat ${level}">
+          <div class="stat-icon">
+            <ha-icon
+              icon=${level === "bad" ? "mdi:battery-alert-variant-outline" : "mdi:battery-high"}
+            ></ha-icon>
+          </div>
+          <div class="stat-body">
+            <div class="stat-label">${t("battery")}</div>
+            <div class="stat-value">${battery}%</div>
+            <div class="meter">
+              <span style="width:${Math.min(Math.max(battery, 0), 100)}%"></span>
+            </div>
+          </div>
+        </div>`,
       );
     }
     const signal = Number(this.entity("signal")?.state);
     if (!Number.isNaN(signal)) {
       const quality = signalQuality(signal);
-      chips.push(
-        html`<span class="chip ${quality === "weak" ? "warn" : "neutral"}" title=${`${signal} dBm`}
-          ><ha-icon icon=${quality === "weak" ? "mdi:wifi-strength-1" : "mdi:bluetooth"}></ha-icon
-          >${t(`signal_${quality}`)}</span
-        >`,
+      const bars = quality === "excellent" ? 3 : quality === "good" ? 2 : 1;
+      tiles.push(
+        html`<div class="stat ${quality === "weak" ? "warn" : "info"}" title=${`${signal} dBm`}>
+          <div class="stat-icon"><ha-icon icon="mdi:bluetooth"></ha-icon></div>
+          <div class="stat-body">
+            <div class="stat-label">${t("signal")}</div>
+            <div class="stat-value">${t(`signal_short_${quality}`)}</div>
+            <div class="bars" aria-hidden="true">
+              ${[1, 2, 3].map((n) => html`<span class=${n <= bars ? "on" : ""}></span>`)}
+            </div>
+          </div>
+        </div>`,
       );
     }
     const drift = Number(this.entity("clock_drift")?.state);
     if (!Number.isNaN(drift)) {
       const off = Math.abs(drift) >= 60;
-      chips.push(
-        html`<span class="chip ${off ? "warn" : "neutral"}"
-          ><ha-icon icon="mdi:clock-outline"></ha-icon>${
-            off ? t("clock_off", { seconds: Math.round(drift) }) : t("clock_ok")
-          }</span
-        >`,
+      tiles.push(
+        html`<div class="stat ${off ? "warn" : "info"}">
+          <div class="stat-icon"><ha-icon icon="mdi:clock-outline"></ha-icon></div>
+          <div class="stat-body">
+            <div class="stat-label">${t("clock")}</div>
+            <div class="stat-value">
+              ${off ? t("clock_drift_short", { seconds: Math.round(drift) }) : t("clock_ok")}
+            </div>
+            ${
+              off && this.safe.can_operate && this.safe.entities.sync_clock
+                ? html`<button
+                    class="link"
+                    ?disabled=${this._busy !== null}
+                    @click=${() => void this.press("sync_clock")}
+                  >
+                    ${t("sync_clock")}
+                  </button>`
+                : nothing
+            }
+          </div>
+        </div>`,
       );
-      if (off && this.safe.can_operate && this.safe.entities.sync_clock) {
-        chips.push(
-          html`<button
-            class="chip-button"
-            ?disabled=${this._busy !== null}
-            @click=${() => void this.press("sync_clock")}
-          >
-            <ha-icon icon="mdi:clock-check-outline"></ha-icon>${t("sync_clock")}
-          </button>`,
-        );
-      }
     }
     const autoLock = Number(this.entity("auto_lock")?.state);
     if (!Number.isNaN(autoLock)) {
-      chips.push(
-        html`<span class="chip neutral"
-          ><ha-icon icon="mdi:timer-lock-outline"></ha-icon>${
-            autoLock > 0 ? t("auto_lock_after", { seconds: autoLock }) : t("auto_lock_off")
-          }</span
-        >`,
+      tiles.push(
+        html`<div class="stat info">
+          <div class="stat-icon"><ha-icon icon="mdi:timer-lock-outline"></ha-icon></div>
+          <div class="stat-body">
+            <div class="stat-label">${t("auto_lock")}</div>
+            <div class="stat-value">
+              ${autoLock > 0 ? t("seconds", { seconds: autoLock }) : t("off")}
+            </div>
+          </div>
+        </div>`,
       );
     }
-    return chips;
+    return tiles;
   }
+
+  // Passcodes
 
   private renderPasscodes() {
     const t = this.t;
     if (!this.safe.admin_key) {
       return html`<section class="card">
         <div class="card-header"><h2>${t("passcodes")}</h2></div>
-        <p class="muted">${t("passcodes_admin_only")}</p>
+        <div class="empty inline">
+          <ha-icon icon="mdi:key-alert-outline"></ha-icon>
+          <p>${t("passcodes_admin_only")}</p>
+        </div>
       </section>`;
     }
     const passcodes = this._list?.passcodes;
@@ -423,7 +474,10 @@ export class PopulifeSafeView extends LitElement {
     return html`
       <section class="card passcodes">
         <div class="card-header">
-          <h2>${t("passcodes")}</h2>
+          <h2>
+            ${t("passcodes")}
+            ${passcodes?.length ? html`<span class="count">${passcodes.length}</span>` : nothing}
+          </h2>
           <button
             class="primary"
             @click=${() => {
@@ -439,68 +493,82 @@ export class PopulifeSafeView extends LitElement {
           passcodes === undefined
             ? html`<p class="muted">${t("loading")}</p>`
             : passcodes.length === 0
-              ? html`<p class="muted">${t("no_passcodes")}</p>`
+              ? html`<div class="empty inline">
+                  <ha-icon icon="mdi:dialpad"></ha-icon>
+                  <p>${t("no_passcodes")}</p>
+                </div>`
               : html`<ul class="list">
-                  ${passcodes.map((passcode) => {
-                    const status = passcodeStatus(passcode, now);
-                    const revealed = this._revealed.has(passcode.code);
-                    return html`<li class="passcode ${status}">
-                      <ha-icon
-                        class="lead"
-                        icon=${passcode.end === null ? "mdi:account-key-outline" : "mdi:timer-sand"}
-                      ></ha-icon>
-                      <div class="grow">
-                        <div class="name">${passcode.name ?? t("unnamed")}</div>
-                        <div class="small muted">
-                          <span class="code"
-                            >${revealed ? passcode.code : mask(passcode.code)}</span
-                          >
-                          ${this.statusChip(passcode, status)}
-                          ${
-                            passcode.on_safe
-                              ? nothing
-                              : html`<span class="chip neutral">${t("not_on_safe")}</span>`
-                          }
-                          ${this.renderLastUsed(passcode)}
-                        </div>
-                      </div>
-                      <div class="row-actions">
-                        <button
-                          class="icon"
-                          title=${revealed ? t("hide_code") : t("show_code")}
-                          aria-label=${revealed ? t("hide_code") : t("show_code")}
-                          @click=${() => {
-                            this.toggleReveal(passcode.code);
-                          }}
-                        >
-                          <ha-icon
-                            icon=${revealed ? "mdi:eye-off-outline" : "mdi:eye-outline"}
-                          ></ha-icon>
-                        </button>
-                        <button
-                          class="icon"
-                          title=${t("share")}
-                          aria-label=${t("share")}
-                          @click=${() => void this.share(passcode)}
-                        >
-                          <ha-icon icon="mdi:share-variant-outline"></ha-icon>
-                        </button>
-                        <button
-                          class="icon delete"
-                          title=${t("delete")}
-                          aria-label=${t("delete")}
-                          ?disabled=${this._busy === `delete:${passcode.code}`}
-                          @click=${() => void this.deletePasscode(passcode)}
-                        >
-                          <ha-icon icon="mdi:delete-outline"></ha-icon>
-                        </button>
-                      </div>
-                    </li>`;
-                  })}
+                  ${passcodes.map((passcode) => this.renderPasscode(passcode, now))}
                 </ul>`
         }
       </section>
     `;
+  }
+
+  private renderPasscode(passcode: Passcode, now: Date) {
+    const t = this.t;
+    const status = passcodeStatus(passcode, now);
+    const revealed = this._revealed.has(passcode.code);
+    const progress = status === "active" ? windowProgress(passcode, now) : null;
+    return html`<li class="passcode ${status}">
+      ${
+        passcode.name
+          ? avatar(passcode.name)
+          : html`<div class="avatar unnamed"><ha-icon icon="mdi:dialpad"></ha-icon></div>`
+      }
+      <div class="grow">
+        <div class="name-row">
+          <span class="name">${passcode.name ?? t("unnamed")}</span>
+          ${this.statusChip(passcode, status)}
+        </div>
+        <div class="small muted">
+          <span class="code">${revealed ? passcode.code : mask(passcode.code)}</span>
+          ${
+            passcode.on_safe ? nothing : html`<span class="chip neutral">${t("not_on_safe")}</span>`
+          }
+          ${this.renderLastUsed(passcode)}
+        </div>
+        ${
+          progress !== null
+            ? html`<div class="timeleft" title=${formatDateTime(passcode.end ?? "", this.language)}>
+                <div class="meter"><span style="width:${(1 - progress) * 100}%"></span></div>
+                <span class="small muted">
+                  ${t("ends", { when: relativeTime(new Date(passcode.end ?? ""), now, this.language) })}
+                </span>
+              </div>`
+            : nothing
+        }
+      </div>
+      <div class="row-actions">
+        <button
+          class="icon"
+          title=${revealed ? t("hide_code") : t("show_code")}
+          aria-label=${revealed ? t("hide_code") : t("show_code")}
+          @click=${() => {
+            this.toggleReveal(passcode.code);
+          }}
+        >
+          <ha-icon icon=${revealed ? "mdi:eye-off-outline" : "mdi:eye-outline"}></ha-icon>
+        </button>
+        <button
+          class="icon"
+          title=${t("share")}
+          aria-label=${t("share")}
+          @click=${() => void this.share(passcode)}
+        >
+          <ha-icon icon="mdi:share-variant-outline"></ha-icon>
+        </button>
+        <button
+          class="icon delete"
+          title=${t("delete")}
+          aria-label=${t("delete")}
+          ?disabled=${this._busy === `delete:${passcode.code}`}
+          @click=${() => void this.deletePasscode(passcode)}
+        >
+          <ha-icon icon="mdi:delete-outline"></ha-icon>
+        </button>
+      </div>
+    </li>`;
   }
 
   private renderLastUsed(passcode: Passcode) {
@@ -521,81 +589,95 @@ export class PopulifeSafeView extends LitElement {
         return html`<span class="chip bad">${t("status_expired")}</span>`;
       case "upcoming":
         return html`<span class="chip warn"
-          >${t("status_upcoming", { when: formatDateTime(passcode.start ?? "", this.language) })}</span
+          >${t("starts", {
+            when: relativeTime(new Date(passcode.start ?? ""), new Date(), this.language),
+          })}</span
         >`;
       case "active":
-        return html`<span class="chip ok"
-          >${t("status_active")} ·
-          ${t("until", { when: formatDateTime(passcode.end ?? "", this.language) })}</span
-        >`;
+        return html`<span class="chip ok">${t("status_active")}</span>`;
     }
   }
 
+  // Activity: a week as a timeline, grouped by day, with counts that double as filters.
+
   private renderActivity() {
     const t = this.t;
-    const operations = (this._operations ?? []).filter((op) => matchesFilter(op, this._filter));
+    const all = this._operations ?? [];
+    const counts = countBy(all);
+    const operations = all.filter((op) => matchesFilter(op, this._filter));
+    const now = new Date();
     return html`
       <section class="card activity">
         <div class="card-header">
           <h2>${t("activity")}</h2>
-          <div class="filters" role="tablist">
-            ${FILTERS.map(
-              (filter) =>
-                html`<button
-                  role="tab"
-                  aria-selected=${this._filter === filter}
-                  class=${this._filter === filter ? "selected" : ""}
-                  @click=${() => (this._filter = filter)}
-                >
-                  ${t(`filter_${filter}`)}
-                </button>`,
-            )}
-          </div>
+          <span class="small muted">${t("week_summary")}</span>
+        </div>
+        <div class="filters" role="tablist">
+          ${FILTERS.map(
+            (filter) =>
+              html`<button
+                role="tab"
+                aria-selected=${this._filter === filter}
+                class="filter ${filter} ${this._filter === filter ? "selected" : ""} ${(filter === "failed" || filter === "alarms") && counts[filter] > 0 ? "hot" : ""}"
+                @click=${() => (this._filter = filter)}
+              >
+                <span class="filter-count">${counts[filter]}</span>
+                <span class="filter-label">${t(`filter_${filter}`)}</span>
+              </button>`,
+          )}
         </div>
         ${
           this._operations === null
             ? html`<p class="muted">${t("loading")}</p>`
             : operations.length === 0
-              ? html`<p class="muted">${t("activity_empty")}</p>`
-              : html`<ul class="list timeline">
-                  ${operations.map(
-                    (op) =>
-                      html`<li class=${op.method}>
-                        <ha-icon
-                          class="lead"
-                          icon=${METHOD_ICONS[op.method] ?? METHOD_ICONS.other}
-                        ></ha-icon>
-                        <div class="grow">
-                          <div>
-                            ${
-                              op.method === "failed" || op.method === "alarm"
-                                ? t(methodKey(op.method))
-                                : html`${t(actionKey(op.action))}${op.user ? html` · <b>${op.user}</b>` : nothing}`
-                            }
-                          </div>
-                          ${
-                            op.method === "failed" || op.method === "alarm"
-                              ? nothing
-                              : html`<div class="small muted">
-                                  ${t(methodKey(op.method))}${op.credential ? ` #${op.credential}` : ""}${
-                                    op.via === "home_assistant" ? ` · ${t("via_ha")}` : ""
-                                  }
-                                </div>`
-                          }
-                        </div>
-                        <time
-                          class="small muted"
-                          datetime=${op.when.toISOString()}
-                          title=${formatDateTime(op.when, this.language)}
-                        >
-                          ${relativeTime(op.when, new Date(), this.language)}
-                        </time>
-                      </li>`,
-                  )}
-                </ul>`
+              ? html`<div class="empty inline">
+                  <ha-icon icon="mdi:calendar-check-outline"></ha-icon>
+                  <p>${t("activity_empty")}</p>
+                </div>`
+              : groupByDay(operations).map(
+                  (group) =>
+                    html`<div class="day">
+                      <div class="day-label">
+                        ${(() => {
+                          const name = dayName(group.day, now);
+                          return name
+                            ? t(name)
+                            : new Intl.DateTimeFormat(this.language, {
+                                weekday: "long",
+                                day: "numeric",
+                                month: "long",
+                              }).format(group.day);
+                        })()}
+                      </div>
+                      <ul class="timeline">
+                        ${group.operations.map((op) => this.renderOperation(op))}
+                      </ul>
+                    </div>`,
+                )
         }
       </section>
     `;
+  }
+
+  private renderOperation(op: Operation) {
+    const t = this.t;
+    const alert = op.method === "failed" || op.method === "alarm";
+    const time = new Intl.DateTimeFormat(this.language, { timeStyle: "short" }).format(op.when);
+    const how = [
+      alert ? null : t(methodKey(op.method)) + (op.credential ? ` #${op.credential}` : ""),
+      op.via === "home_assistant" ? t("via_ha") : null,
+      time,
+    ].filter(Boolean);
+    return html`<li class="op m-${op.method} ${alert ? "alert" : ""}">
+      <div class="op-icon">
+        <ha-icon icon=${METHOD_ICONS[op.method] ?? METHOD_ICONS.other}></ha-icon>
+      </div>
+      <div class="grow">
+        <div class="op-title">${alert ? t(methodKey(op.method)) : t(actionKey(op.action))}</div>
+        <div class="small muted">${how.join(" · ")}</div>
+      </div>
+      ${op.user ? html`<div class="who">${avatar(op.user, "sm")}<span>${op.user}</span></div>` : nothing}
+    </li>`;
   }
 
   private renderFingerprints() {
@@ -604,24 +686,40 @@ export class PopulifeSafeView extends LitElement {
     const fingerprints = this._list?.fingerprints ?? [];
     return html`
       <section class="card fingerprints">
-        <div class="card-header"><h2>${t("fingerprints")}</h2></div>
+        <div class="card-header">
+          <h2>
+            ${t("fingerprints")}
+            ${fingerprints.length ? html`<span class="count">${fingerprints.length}</span>` : nothing}
+          </h2>
+        </div>
         ${
           fingerprints.length === 0
-            ? html`<p class="muted">${t("no_fingerprints")}</p>`
-            : html`<ul class="list">
+            ? html`<div class="empty inline">
+                <ha-icon icon="mdi:fingerprint-off"></ha-icon>
+                <p>${t("no_fingerprints")}</p>
+              </div>`
+            : html`<ul class="fp-grid">
                 ${fingerprints.map(
                   (fp) =>
                     html`<li>
-                      <ha-icon class="lead" icon="mdi:fingerprint"></ha-icon>
-                      <div class="grow">${t("slot", { slot: fp.slot })}</div>
-                      <span class="small muted"
-                        >${fp.end ? t("until", { when: formatDateTime(fp.end, this.language) }) : t("status_permanent")}</span
-                      >
+                      <ha-icon icon="mdi:fingerprint"></ha-icon>
+                      <div>
+                        <div class="name">${t("slot", { slot: fp.slot })}</div>
+                        <div class="small muted">
+                          ${
+                            fp.end
+                              ? t("until", { when: formatDateTime(fp.end, this.language) })
+                              : t("status_permanent")
+                          }
+                        </div>
+                      </div>
                     </li>`,
                 )}
               </ul>`
         }
-        <p class="muted small">${t("fingerprints_note")}</p>
+        <p class="muted small note">
+          <ha-icon icon="mdi:information-outline"></ha-icon>${t("fingerprints_note")}
+        </p>
       </section>
     `;
   }
@@ -629,12 +727,25 @@ export class PopulifeSafeView extends LitElement {
   static override styles = [
     shared,
     css`
+      :host {
+        --m-app: #009688;
+        --m-keypad: #3f51b5;
+        --m-fingerprint: #9c27b0;
+        --m-card: #ff9800;
+        --m-key: #795548;
+        --m-gateway: #607d8b;
+        --m-remote: #00bcd4;
+        --m-failed: var(--error-color, #db4437);
+        --m-alarm: var(--error-color, #db4437);
+        --m-other: var(--secondary-text-color);
+        --radius: var(--ha-card-border-radius, 16px);
+      }
       .layout {
         display: grid;
         gap: 16px;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         margin: 0 auto;
-        max-width: 1100px;
+        max-width: 1120px;
         padding: 16px;
       }
       .layout.narrow {
@@ -644,105 +755,279 @@ export class PopulifeSafeView extends LitElement {
       .wide {
         grid-column: 1 / -1;
       }
+      .card {
+        animation: rise 0.35s ease both;
+        border-radius: var(--radius);
+      }
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+      }
+      h2 {
+        align-items: center;
+        display: flex;
+        gap: 8px;
+      }
+      .count {
+        background: var(--secondary-background-color);
+        border-radius: 10px;
+        color: var(--secondary-text-color);
+        font-size: 0.75rem;
+        font-weight: 500;
+        padding: 1px 8px;
+      }
+
+      /* Hero */
       .hero {
+        --tone: var(--secondary-text-color);
+        background:
+          radial-gradient(
+            120% 140% at 0% 0%,
+            color-mix(in srgb, var(--tone) 16%, transparent) 0%,
+            transparent 55%
+          ),
+          var(--ha-card-background, var(--card-background-color, #fff));
+        overflow: hidden;
+        padding: 20px;
+      }
+      .tone-locked {
+        --tone: var(--state-lock-locked-color, var(--success-color, #43a047));
+      }
+      .tone-open {
+        --tone: var(--state-lock-unlocked-color, var(--error-color, #db4437));
+      }
+      .tone-gone {
+        --tone: var(--disabled-text-color, var(--secondary-text-color));
+      }
+      .hero-main {
         align-items: center;
         display: flex;
         flex-wrap: wrap;
-        gap: 16px 24px;
-        justify-content: space-between;
+        gap: 16px 20px;
       }
-      .is-locked {
-        --state-color: var(--state-lock-locked-color, var(--success-color, #43a047));
+      .hero-badge {
+        align-items: center;
+        background: color-mix(in srgb, var(--tone) 18%, transparent);
+        border-radius: 22px;
+        color: var(--tone);
+        display: flex;
+        flex: none;
+        height: 72px;
+        justify-content: center;
+        width: 72px;
       }
-      .is-open {
-        --state-color: var(--state-lock-unlocked-color, var(--error-color, #db4437));
-      }
-      .is-gone {
-        --state-color: var(--disabled-text-color, var(--secondary-text-color));
+      .hero-badge ha-icon {
+        --mdc-icon-size: 40px;
       }
       .hero-text {
         display: grid;
-        flex: 1 1 280px;
-        gap: 6px;
+        flex: 1 1 240px;
+        gap: 4px;
         min-width: 0;
       }
-      .title-row {
+      .eyebrow {
         align-items: center;
+        color: var(--secondary-text-color);
         display: flex;
+        font-size: 0.8rem;
+        font-weight: 500;
         gap: 4px;
         justify-content: space-between;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
       }
-      .title-row h2 {
-        color: var(--secondary-text-color);
-        font-size: 1rem;
+      .eyebrow span {
         overflow: hidden;
         text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ghost {
+        color: var(--secondary-text-color);
+        min-height: 32px;
+        min-width: 32px;
       }
       .state {
-        align-items: center;
-        color: var(--state-color);
-        display: flex;
-        font-size: 2rem;
-        font-weight: 500;
-        gap: 10px;
+        color: var(--tone);
+        font-size: clamp(1.8rem, 4vw, 2.6rem);
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
       }
-      .state ha-icon {
-        --mdc-icon-size: 34px;
-      }
-      .chips {
+      .last {
         align-items: center;
+        color: var(--secondary-text-color);
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
-        margin-top: 4px;
       }
-      .chips .chip {
-        align-items: center;
-        font-size: 0.8rem;
-        padding: 4px 10px;
-      }
-      .chips ha-icon {
+      .last ha-icon {
         --mdc-icon-size: 16px;
       }
-      .chip-button {
-        font-size: 0.8rem;
-        min-height: 28px;
-        padding: 0 10px;
+      .last b {
+        color: var(--primary-text-color);
+        font-weight: 500;
+      }
+      .dot {
+        opacity: 0.6;
       }
       .action {
         --hold-color: var(--primary-color);
         margin: 0 auto;
       }
-      .used {
-        color: var(--secondary-text-color);
+      .action.attention {
+        --hold-color: var(--tone);
+        animation: pulse 2.2s ease-in-out infinite;
+        border-radius: 50%;
       }
+      @keyframes pulse {
+        50% {
+          filter: drop-shadow(0 0 12px color-mix(in srgb, var(--tone) 55%, transparent));
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .card,
+        .action.attention {
+          animation: none;
+        }
+      }
+      .stats {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        margin-top: 18px;
+      }
+      .stat {
+        --c: var(--primary-color);
+        align-items: center;
+        background: color-mix(
+          in srgb,
+          var(--c) 9%,
+          var(--ha-card-background, var(--card-background-color, #fff))
+        );
+        border: 1px solid color-mix(in srgb, var(--c) 14%, transparent);
+        border-radius: 16px;
+        display: flex;
+        gap: 12px;
+        padding: 12px 14px;
+      }
+      .stat.ok {
+        --c: var(--success-color, #43a047);
+      }
+      .stat.warn {
+        --c: var(--warning-color, #ffa600);
+      }
+      .stat.bad {
+        --c: var(--error-color, #db4437);
+      }
+      .stat-icon {
+        align-items: center;
+        background: color-mix(in srgb, var(--c) 20%, transparent);
+        border-radius: 50%;
+        color: color-mix(in srgb, var(--c) 65%, var(--primary-text-color));
+        display: flex;
+        flex: none;
+        height: 36px;
+        justify-content: center;
+        width: 36px;
+      }
+      .stat-body {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      .stat-label {
+        color: var(--secondary-text-color);
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .stat-value {
+        font-size: 1.05rem;
+        font-weight: 600;
+      }
+      .meter {
+        background: color-mix(in srgb, var(--c, var(--primary-color)) 18%, transparent);
+        border-radius: 3px;
+        height: 4px;
+        overflow: hidden;
+        width: 100%;
+      }
+      .meter span {
+        background: var(--c, var(--primary-color));
+        border-radius: 3px;
+        display: block;
+        height: 100%;
+      }
+      .bars {
+        align-items: flex-end;
+        display: flex;
+        gap: 2px;
+        height: 10px;
+      }
+      .bars span {
+        background: color-mix(in srgb, var(--c) 25%, transparent);
+        border-radius: 1px;
+        width: 4px;
+      }
+      .bars span:nth-child(1) {
+        height: 4px;
+      }
+      .bars span:nth-child(2) {
+        height: 7px;
+      }
+      .bars span:nth-child(3) {
+        height: 10px;
+      }
+      .bars span.on {
+        background: var(--c);
+      }
+      button.link {
+        border: none;
+        color: var(--c);
+        font-size: 0.8rem;
+        font-weight: 600;
+        justify-content: flex-start;
+        min-height: 0;
+        padding: 0;
+      }
+      button.link:hover:not([disabled]) {
+        background: none;
+        text-decoration: underline;
+      }
+
+      /* Lists */
       .list {
         display: grid;
+        gap: 4px;
         list-style: none;
         margin: 0;
         padding: 0;
       }
       .list li {
         align-items: center;
-        border-top: 1px solid var(--divider-color);
+        border-radius: 12px;
         display: flex;
         gap: 12px;
-        min-height: 56px;
-        padding: 6px 0;
+        min-height: 60px;
+        padding: 8px;
+        transition: background 0.15s ease;
       }
-      .list li:first-child {
-        border-top: none;
-      }
-      .lead {
-        color: var(--secondary-text-color);
-        flex: none;
+      .list li:hover {
+        background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
       }
       .grow {
         display: grid;
         flex: 1;
-        gap: 2px;
-        /* A grid track is otherwise as wide as its longest unbreakable line. */
+        gap: 3px;
         grid-template-columns: minmax(0, 1fr);
+        min-width: 0;
+      }
+      .name-row {
+        align-items: center;
+        display: flex;
+        gap: 8px;
         min-width: 0;
       }
       .name {
@@ -757,58 +1042,287 @@ export class PopulifeSafeView extends LitElement {
         flex-wrap: wrap;
         gap: 6px;
       }
-      .grow .chip {
+      .chip {
+        flex: none;
         max-width: 100%;
-        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .narrow .row-actions button.icon {
-        min-height: 36px;
-        min-width: 36px;
-      }
-      .activity .card-header {
-        flex-wrap: wrap;
-      }
       .code {
+        background: var(--secondary-background-color);
+        border-radius: 6px;
+        color: var(--primary-text-color);
         font-family: var(--ha-font-family-code, monospace);
         letter-spacing: 0.15em;
+        padding: 1px 6px;
       }
       .passcode.expired .name,
-      .passcode.expired .code {
-        opacity: 0.55;
+      .passcode.expired .code,
+      .passcode.expired .avatar {
+        opacity: 0.5;
+      }
+      .timeleft {
+        align-items: center;
+        display: flex;
+        gap: 8px;
+        margin-top: 2px;
+      }
+      .timeleft .meter {
+        --c: var(--success-color, #43a047);
+        flex: 0 1 120px;
       }
       .row-actions {
         display: flex;
         flex: none;
       }
+      .narrow .row-actions button.icon {
+        min-height: 36px;
+        min-width: 36px;
+      }
       .delete:hover:not([disabled]) {
         color: var(--error-color);
       }
-      .filters {
+      .used {
+        color: var(--secondary-text-color);
+      }
+
+      /* Avatars */
+      .avatar {
+        align-items: center;
+        background: hsl(var(--hue) 70% 50% / 0.2);
+        border-radius: 50%;
+        /* Mixed with the text colour, so it reads on light and dark themes alike. */
+        color: color-mix(in srgb, hsl(var(--hue) 65% 48%) 70%, var(--primary-text-color));
         display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
+        flex: none;
+        font-size: 0.9rem;
+        font-weight: 600;
+        height: 40px;
+        justify-content: center;
+        width: 40px;
       }
-      .filters button {
-        font-size: 0.8rem;
-        min-height: 28px;
-        padding: 0 10px;
+      .avatar.unnamed {
+        background: var(--secondary-background-color);
+        color: var(--secondary-text-color);
       }
-      .filters button.selected {
-        background: color-mix(in srgb, var(--primary-color) 18%, transparent);
-        border-color: transparent;
-        color: var(--primary-color);
+      .avatar.sm {
+        font-size: 0.7rem;
+        height: 24px;
+        width: 24px;
       }
-      .timeline .failed .lead,
-      .timeline .alarm .lead {
+      .avatar.xs {
+        font-size: 0.6rem;
+        height: 18px;
+        width: 18px;
+      }
+
+      /* Activity */
+      .filters {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin-bottom: 8px;
+      }
+      .filter {
+        --c: var(--primary-color);
+        align-items: flex-start;
+        border: 1px solid var(--divider-color);
+        border-radius: 14px;
+        flex-direction: column;
+        transition:
+          background 0.15s ease,
+          border-color 0.15s ease;
+        gap: 0;
+        justify-content: center;
+        min-height: 56px;
+        padding: 6px 12px;
+      }
+      .filter.failed,
+      .filter.alarms {
+        --c: var(--error-color, #db4437);
+      }
+      .filter-count {
+        font-size: 1.3rem;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      .filter-label {
+        color: var(--secondary-text-color);
+        text-align: start;
+        font-size: 0.75rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        width: 100%;
+      }
+      .filter.selected {
+        background: color-mix(in srgb, var(--c) 12%, transparent);
+        border-color: color-mix(in srgb, var(--c) 45%, transparent);
+      }
+      .filter.hot .filter-count,
+      .filter.selected .filter-count {
+        color: var(--c);
+      }
+      .day-label {
+        color: var(--secondary-text-color);
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        margin: 14px 0 4px 4px;
+        text-transform: uppercase;
+      }
+      .timeline {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        position: relative;
+      }
+      .timeline::before {
+        background: var(--divider-color);
+        bottom: 24px;
+        content: "";
+        left: 21px;
+        position: absolute;
+        top: 24px;
+        width: 2px;
+      }
+      .op {
+        align-items: center;
+        border-radius: 12px;
+        display: flex;
+        gap: 12px;
+        padding: 6px 4px;
+        position: relative;
+      }
+      .op-icon {
+        --c: var(--m-other);
+        align-items: center;
+        background: color-mix(in srgb, var(--c) 16%, var(--card-background-color, #fff));
+        border: 2px solid var(--card-background-color, #fff);
+        border-radius: 50%;
+        color: var(--c);
+        display: flex;
+        flex: none;
+        height: 36px;
+        justify-content: center;
+        width: 36px;
+        z-index: 1;
+      }
+      .m-app .op-icon {
+        --c: var(--m-app);
+      }
+      .m-keypad .op-icon {
+        --c: var(--m-keypad);
+      }
+      .m-fingerprint .op-icon {
+        --c: var(--m-fingerprint);
+      }
+      .m-card .op-icon {
+        --c: var(--m-card);
+      }
+      .m-key .op-icon {
+        --c: var(--m-key);
+      }
+      .m-gateway .op-icon {
+        --c: var(--m-gateway);
+      }
+      .m-remote .op-icon {
+        --c: var(--m-remote);
+      }
+      .m-failed .op-icon,
+      .m-alarm .op-icon {
+        --c: var(--m-failed);
+      }
+      .op.alert .op-title {
         color: var(--error-color);
       }
-      .timeline time {
+      .op-title {
+        font-weight: 500;
+      }
+      .who {
+        align-items: center;
+        background: var(--secondary-background-color);
+        border-radius: 14px;
+        display: flex;
         flex: none;
+        font-size: 0.8rem;
+        font-weight: 500;
+        gap: 6px;
+        max-width: 45%;
+        padding: 3px 10px 3px 3px;
+      }
+      .who span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* Fingerprints */
+      .fp-grid {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .fp-grid li {
+        align-items: center;
+        background: color-mix(
+          in srgb,
+          var(--m-fingerprint) 8%,
+          var(--ha-card-background, var(--card-background-color, #fff))
+        );
+        border: 1px solid color-mix(in srgb, var(--m-fingerprint) 16%, transparent);
+        border-radius: 16px;
+        display: flex;
+        gap: 10px;
+        padding: 10px 12px;
+      }
+      .fp-grid ha-icon {
+        color: color-mix(in srgb, var(--m-fingerprint) 65%, var(--primary-text-color));
+      }
+      .note {
+        align-items: flex-start;
+        display: flex;
+        gap: 6px;
+        margin-bottom: 0;
+      }
+      .note ha-icon {
+        --mdc-icon-size: 16px;
+        flex: none;
+      }
+
+      /* Empty states */
+      .empty {
+        align-items: center;
+        color: var(--secondary-text-color);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 24px;
+        text-align: center;
+      }
+      .empty ha-icon {
+        --mdc-icon-size: 40px;
+        opacity: 0.5;
+      }
+      .empty p {
+        margin: 0;
+        max-width: 420px;
+      }
+      .empty.inline {
+        padding: 16px 8px;
       }
     `,
   ];
+}
+
+/** A round avatar with a person's initials, in a colour of their own. */
+function avatar(name: string, size: "" | "sm" | "xs" = "") {
+  return html`<div class="avatar ${size}" style="--hue:${hueFor(name)}" aria-hidden="true">
+    ${initials(name)}
+  </div>`;
 }
 
 function errorText(error: unknown): string {

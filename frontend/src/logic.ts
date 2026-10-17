@@ -209,3 +209,67 @@ export function lastUsed(name: string | null, operations: Operation[]): Date | n
   );
   return used ? used.when : null;
 }
+
+/** Up to two initials for an avatar. */
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const letters = words.length > 1 ? [words[0], words[1]] : [name.trim()];
+  return letters
+    .map((word) => (word ? Array.from(word)[0] : ""))
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+/** A stable hue for a name, so each person keeps their avatar colour. */
+export function hueFor(name: string): number {
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) % 360;
+  return hash;
+}
+
+/** How much of a temporary passcode's window has passed, 0 to 1; null without a window. */
+export function windowProgress(passcode: Passcode, now: Date): number | null {
+  if (passcode.end === null) return null;
+  const end = new Date(passcode.end).getTime();
+  const start = passcode.start ? new Date(passcode.start).getTime() : end;
+  if (end <= start) return now.getTime() >= end ? 1 : 0;
+  return Math.min(Math.max((now.getTime() - start) / (end - start), 0), 1);
+}
+
+export interface DayGroup {
+  key: string;
+  day: Date;
+  operations: Operation[];
+}
+
+/** Operations grouped by calendar day, newest day first; they're already newest first. */
+export function groupByDay(operations: Operation[]): DayGroup[] {
+  const groups: DayGroup[] = [];
+  for (const operation of operations) {
+    const day = new Date(operation.when);
+    day.setHours(0, 0, 0, 0);
+    const key = day.toISOString();
+    const last = groups.at(-1);
+    if (last?.key === key) last.operations.push(operation);
+    else groups.push({ key, day, operations: [operation] });
+  }
+  return groups;
+}
+
+/** "today", "yesterday", or null for older days (shown as a date). */
+export function dayName(day: Date, now: Date): "today" | "yesterday" | null {
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - day.getTime()) / 86_400_000);
+  return days === 0 ? "today" : days === 1 ? "yesterday" : null;
+}
+
+export function countBy(operations: Operation[]): Record<ActivityFilter, number> {
+  return {
+    all: operations.length,
+    unlocks: operations.filter((op) => matchesFilter(op, "unlocks")).length,
+    failed: operations.filter((op) => matchesFilter(op, "failed")).length,
+    alarms: operations.filter((op) => matchesFilter(op, "alarms")).length,
+  };
+}

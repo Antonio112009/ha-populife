@@ -198,8 +198,14 @@ export class PopulifeHoldButton extends LitElement {
     }
     .face {
       align-items: center;
-      background: var(--hold-color);
+      background: linear-gradient(
+        145deg,
+        color-mix(in srgb, var(--hold-color) 75%, #fff) 0%,
+        var(--hold-color) 55%,
+        color-mix(in srgb, var(--hold-color) 85%, #000) 100%
+      );
       border-radius: 50%;
+      box-shadow: 0 6px 18px color-mix(in srgb, var(--hold-color) 40%, transparent);
       color: var(--text-primary-color, #fff);
       display: flex;
       flex-direction: column;
@@ -207,7 +213,12 @@ export class PopulifeHoldButton extends LitElement {
       inset: 10px;
       justify-content: center;
       position: absolute;
-      transition: transform 0.15s ease;
+      transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease;
+    }
+    button:hover:not([disabled]) .face {
+      box-shadow: 0 8px 24px color-mix(in srgb, var(--hold-color) 50%, transparent);
     }
     button:active:not([disabled]) .face {
       transform: scale(0.96);

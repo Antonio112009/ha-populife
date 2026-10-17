@@ -6,7 +6,12 @@ import {
   checkCode,
   checkWindow,
   conflicts,
+  countBy,
+  dayName,
   defaultWindow,
+  groupByDay,
+  hueFor,
+  initials,
   lastUsed,
   mask,
   matchesFilter,
@@ -16,6 +21,7 @@ import {
   relativeTime,
   signalQuality,
   toLocalInput,
+  windowProgress,
 } from "../src/logic";
 import type { Operation, Passcode } from "../src/types";
 
@@ -193,5 +199,48 @@ describe("status chips", () => {
     expect(lastUsed("Plumber", operations)).toBeNull();
     expect(lastUsed(null, operations)).toBeNull();
     expect(lastUsed("Anton", [at("2026-10-17T10:00:00Z", "Anton", "app")])).toBeNull();
+  });
+});
+
+describe("design helpers", () => {
+  const op = (when: Date, method = "keypad", action = "unlock"): Operation => ({
+    when,
+    method,
+    action,
+    user: null,
+    credential: null,
+    via: null,
+  });
+
+  it("makes initials and a stable hue for avatars", () => {
+    expect(initials("Guest this weekend")).toBe("GT");
+    expect(initials("mama")).toBe("M");
+    expect(hueFor("Mama")).toBe(hueFor("Mama"));
+    expect(hueFor("Mama")).toBeGreaterThanOrEqual(0);
+    expect(hueFor("Mama")).toBeLessThan(360);
+  });
+
+  it("says how much of a temporary window has passed", () => {
+    const now = new Date("2026-10-17T12:00:00Z");
+    expect(windowProgress(passcode(null, null), now)).toBeNull();
+    expect(windowProgress(passcode("2026-10-17T00:00:00Z", "2026-10-18T00:00:00Z"), now)).toBe(0.5);
+  });
+
+  it("groups operations by day and names today and yesterday", () => {
+    const now = new Date(2026, 9, 17, 12, 0);
+    const groups = groupByDay([
+      op(new Date(2026, 9, 17, 10, 0)),
+      op(new Date(2026, 9, 17, 9, 0)),
+      op(new Date(2026, 9, 16, 22, 0), "failed", "other"),
+      op(new Date(2026, 9, 14, 8, 0), "app", "lock"),
+    ]);
+    expect(groups.map((group) => group.operations.length)).toEqual([2, 1, 1]);
+    expect(groups.map((group) => dayName(group.day, now))).toEqual(["today", "yesterday", null]);
+    expect(countBy(groups.flatMap((group) => group.operations))).toEqual({
+      all: 4,
+      unlocks: 2,
+      failed: 1,
+      alarms: 0,
+    });
   });
 });

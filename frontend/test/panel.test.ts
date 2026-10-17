@@ -52,12 +52,16 @@ describe("panel", () => {
     await safe.updateComplete;
     // Unlocked now: a plain tap locks.
     expect(hold.hold).toBe(false);
-    expect(text(root, ".chips .chip")).toContain("Auto-locks after 5 s");
+    expect(text(root, ".stat")).toContain("Auto-lock 5 s");
   });
 
   it("names the Home Assistant user behind an app unlock", async () => {
     const { root } = await mount();
-    expect(text(root, ".activity li .grow")).toContain("Opened · Anton App · via Home Assistant");
+    const byAnton = [...root.querySelectorAll(".activity .op")].find(
+      (op) => op.querySelector(".who span")?.textContent === "Anton",
+    );
+    expect(byAnton?.querySelector(".op-title")?.textContent).toBe("Opened");
+    expect(text(byAnton as Element, ".small")[0]).toMatch(/^App · via Home Assistant · /);
     expect(text(root, ".passcodes .used")[0]).toMatch(/^used /);
   });
 
@@ -70,9 +74,8 @@ describe("panel", () => {
 
   it("filters the activity", async () => {
     const { safe, root } = await mount();
-    const failed = [...root.querySelectorAll<HTMLButtonElement>(".filters button")].find(
-      (button) => button.textContent.trim() === "Failed",
-    );
+    const failed = root.querySelector<HTMLButtonElement>(".filter.failed");
+    expect(text(root, ".filter.failed")).toEqual(["1 Failed"]);
     failed?.click();
     await safe.updateComplete;
     expect(root.querySelectorAll(".activity li").length).toBe(1);
@@ -80,9 +83,16 @@ describe("panel", () => {
 
   it("shows only an explanation to people who may not operate the safe", async () => {
     const { root } = await mount({ canOperate: false });
-    expect(root.querySelector(".status-actions button")).toBeNull();
+    expect(root.querySelector("populife-hold-button")).toBeNull();
     expect(root.querySelector(".passcodes")).toBeNull();
-    expect(text(root, ".card.wide.muted")[0]).toMatch(/may not operate/);
+    expect(text(root, ".card.wide.empty")[0]).toMatch(/may not operate/);
+  });
+
+  it("groups the activity by day and shows the safe's vitals", async () => {
+    const { root } = await mount();
+    expect(text(root, ".day-label")[0]).toBe("Today");
+    expect(text(root, ".stat .stat-label")).toEqual(["Battery", "Signal", "Clock", "Auto-lock"]);
+    expect(root.querySelectorAll(".passcodes .avatar:not(.unnamed)").length).toBe(3);
   });
 
   it("speaks Russian to Russian users", async () => {
