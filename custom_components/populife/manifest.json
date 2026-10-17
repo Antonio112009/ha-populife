@@ -16,5 +16,5 @@
   "issue_tracker": "https://github.com/Antonio112009/ha-populife/issues",
   "loggers": ["ttlock_ble"],
   "requirements": ["ttlock-ble==0.3.2"],
-  "version": "0.5.1"
+  "version": "0.6.0"
 }
