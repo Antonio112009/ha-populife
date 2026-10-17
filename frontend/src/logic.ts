@@ -1,0 +1,300 @@
+/** Pure helpers behind the panel, kept free of DOM and Home Assistant so they're easy to test. */
+
+import type { Operation, Passcode } from "./types";
+
+export const MIN_CODE = 4;
+export const MAX_CODE = 9;
+
+export type CodeProblem = "empty" | "digits" | "length" | "conflict";
+
+/** Mirror of the integration's prefix rule: the keypad accepts the first stored match. */
+export function conflicts(code: string, others: Iterable<string>): string | null {
+  for (const other of others) {
+    if (other !== code && (code.startsWith(other) || other.startsWith(code))) return other;
+  }
+  return null;
+}
+
+export function checkCode(code: string, known: Iterable<string>): CodeProblem | null {
+  if (code === "") return "empty";
+  if (!/^\d+$/.test(code)) return "digits";
+  if (code.length < MIN_CODE || code.length > MAX_CODE) return "length";
+  return conflicts(code, known) === null ? null : "conflict";
+}
+
+export type WindowProblem = "missing_end" | "end_in_past" | "end_before_start";
+
+/** Check a validity window; an empty `start` means "from now". */
+export function checkWindow(
+  start: string,
+  end: string,
+  now: Date = new Date(),
+): WindowProblem | null {
+  if (end === "") return "missing_end";
+  const until = new Date(end);
+  if (until <= now) return "end_in_past";
+  if (start !== "" && until <= new Date(start)) return "end_before_start";
+  return null;
+}
+
+/** A duration as its two largest units, e.g. "2 days 3 hours", in the user's language. */
+export function formatDuration(milliseconds: number, language: string): string {
+  const minutes = Math.max(Math.round(milliseconds / 60_000), 1);
+  const parts: [number, "day" | "hour" | "minute"][] = [
+    [Math.floor(minutes / 1440), "day"],
+    [Math.floor((minutes % 1440) / 60), "hour"],
+    [minutes % 60, "minute"],
+  ];
+  const first = parts.findIndex(([value]) => value > 0);
+  return parts
+    .slice(first, first + 2)
+    .filter(([value]) => value > 0)
+    .map(([value, unit]) =>
+      new Intl.NumberFormat(language, { style: "unit", unit, unitDisplay: "long" }).format(value),
+    )
+    .join(" ");
+}
+
+export type PasscodeStatus = "permanent" | "upcoming" | "active" | "expired";
+
+export function passcodeStatus(passcode: Passcode, now: Date): PasscodeStatus {
+  if (passcode.end === null) return "permanent";
+  if (new Date(passcode.end) <= now) return "expired";
+  if (passcode.start !== null && new Date(passcode.start) > now) return "upcoming";
+  return "active";
+}
+
+export function mask(code: string): string {
+  return "•".repeat(Math.max(code.length - 2, 0)) + code.slice(-2);
+}
+
+/** `<input type="datetime-local">` value for a date, in the browser's local time. */
+export function toLocalInput(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+}
+
+/** The next 24 hours, starting at the current minute: the default temporary window. */
+export function defaultWindow(now: Date): { start: string; end: string } {
+  const start = new Date(now);
+  start.setSeconds(0, 0);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { start: toLocalInput(start), end: toLocalInput(end) };
+}
+
+export const METHOD_ICONS: Record<string, string> = {
+  app: "mdi:cellphone-key",
+  keypad: "mdi:dialpad",
+  fingerprint: "mdi:fingerprint",
+  card: "mdi:card-account-details-outline",
+  key: "mdi:key-variant",
+  gateway: "mdi:router-wireless",
+  remote: "mdi:remote",
+  failed: "mdi:alert-circle-outline",
+  alarm: "mdi:alarm-light-outline",
+  other: "mdi:information-outline",
+};
+
+export type ActivityFilter = "all" | "unlocks" | "failed" | "alarms";
+
+export function matchesFilter(operation: Operation, filter: ActivityFilter): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "unlocks":
+      return operation.action === "unlock";
+    case "failed":
+      return operation.method === "failed";
+    case "alarms":
+      return operation.method === "alarm";
+  }
+}
+
+interface HistoryState {
+  s: string;
+  a?: Record<string, unknown>;
+  lu?: number;
+}
+
+const str = (value: unknown): string | null => (typeof value === "string" ? value : null);
+
+/**
+ * Operations from `history/history_during_period` for the operation event entity, newest
+ * first. Each state change of the event entity is one operation; its attributes say how.
+ */
+export function parseOperations(
+  history: Record<string, HistoryState[] | undefined>,
+  entityId: string,
+): Operation[] {
+  const operations: Operation[] = [];
+  let attributes: Record<string, unknown> = {};
+  for (const state of history[entityId] ?? []) {
+    // The compressed format repeats attributes only when they change.
+    if (state.a) attributes = state.a;
+    const method = str(attributes.event_type);
+    const when = Date.parse(state.s);
+    if (method === null || Number.isNaN(when)) continue;
+    operations.push({
+      when: new Date(str(attributes.time) ?? when),
+      method,
+      action: str(attributes.action) ?? "other",
+      user: str(attributes.user),
+      credential: str(attributes.credential),
+      via: str(attributes.via),
+    });
+  }
+  return operations.sort((a, b) => b.when.getTime() - a.when.getTime());
+}
+
+/** "5 minutes ago" in the user's language. */
+export function relativeTime(date: Date, now: Date, language: string): string {
+  const seconds = Math.round((date.getTime() - now.getTime()) / 1000);
+  const format = new Intl.RelativeTimeFormat(language, { numeric: "auto" });
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60],
+  ];
+  for (const [unit, size] of units) {
+    if (Math.abs(seconds) >= size) return format.format(Math.round(seconds / size), unit);
+  }
+  return format.format(seconds, "second");
+}
+
+export function formatDateTime(value: string | Date, language: string): string {
+  return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(
+    typeof value === "string" ? new Date(value) : value,
+  );
+}
+
+export type WindowPreset = "24h" | "today" | "weekend" | "week" | "custom";
+export const WINDOW_PRESETS: WindowPreset[] = ["24h", "today", "weekend", "week", "custom"];
+
+/** The window a preset stands for, as datetime-local values; null for "custom". */
+export function presetWindow(
+  preset: WindowPreset,
+  now: Date,
+): { start: string; end: string } | null {
+  const start = new Date(now);
+  start.setSeconds(0, 0);
+  const end = new Date(start);
+  switch (preset) {
+    case "custom":
+      return null;
+    case "24h":
+      end.setDate(end.getDate() + 1);
+      break;
+    case "today":
+      end.setHours(23, 59, 0, 0);
+      break;
+    case "week":
+      end.setDate(end.getDate() + 7);
+      break;
+    case "weekend": {
+      // From Saturday 00:00 (or now, during the weekend) to Sunday 23:59.
+      const day = start.getDay();
+      const toSaturday = day === 6 ? 0 : day === 0 ? -1 : 6 - day;
+      if (day !== 6 && day !== 0) {
+        start.setDate(start.getDate() + toSaturday);
+        start.setHours(0, 0, 0, 0);
+      }
+      end.setTime(start.getTime());
+      end.setDate(end.getDate() + (start.getDay() === 6 ? 1 : 0));
+      end.setHours(23, 59, 0, 0);
+      break;
+    }
+  }
+  return { start: toLocalInput(start), end: toLocalInput(end) };
+}
+
+export type Level = "ok" | "warn" | "bad";
+
+export function batteryLevel(percent: number): Level {
+  if (percent < 20) return "bad";
+  if (percent < 40) return "warn";
+  return "ok";
+}
+
+export type SignalQuality = "excellent" | "good" | "weak";
+
+export function signalQuality(dbm: number): SignalQuality {
+  if (dbm >= -65) return "excellent";
+  if (dbm >= -80) return "good";
+  return "weak";
+}
+
+/** When the code with this name last opened the safe, from the activity. */
+export function lastUsed(name: string | null, operations: Operation[]): Date | null {
+  if (name === null) return null;
+  const used = operations.find(
+    (op) => op.user === name && op.action === "unlock" && op.method === "keypad",
+  );
+  return used ? used.when : null;
+}
+
+/** Up to two initials for an avatar. */
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  const letters = words.length > 1 ? [words[0], words[1]] : [name.trim()];
+  return letters
+    .map((word) => (word ? Array.from(word)[0] : ""))
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+/** A stable hue for a name, so each person keeps their avatar colour. */
+export function hueFor(name: string): number {
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) % 360;
+  return hash;
+}
+
+/** How much of a temporary passcode's window has passed, 0 to 1; null without a window. */
+export function windowProgress(passcode: Passcode, now: Date): number | null {
+  if (passcode.end === null) return null;
+  const end = new Date(passcode.end).getTime();
+  const start = passcode.start ? new Date(passcode.start).getTime() : end;
+  if (end <= start) return now.getTime() >= end ? 1 : 0;
+  return Math.min(Math.max((now.getTime() - start) / (end - start), 0), 1);
+}
+
+export interface DayGroup {
+  key: string;
+  day: Date;
+  operations: Operation[];
+}
+
+/** Operations grouped by calendar day, newest day first; they're already newest first. */
+export function groupByDay(operations: Operation[]): DayGroup[] {
+  const groups: DayGroup[] = [];
+  for (const operation of operations) {
+    const day = new Date(operation.when);
+    day.setHours(0, 0, 0, 0);
+    const key = day.toISOString();
+    const last = groups.at(-1);
+    if (last?.key === key) last.operations.push(operation);
+    else groups.push({ key, day, operations: [operation] });
+  }
+  return groups;
+}
+
+/** "today", "yesterday", or null for older days (shown as a date). */
+export function dayName(day: Date, now: Date): "today" | "yesterday" | null {
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - day.getTime()) / 86_400_000);
+  return days === 0 ? "today" : days === 1 ? "yesterday" : null;
+}
+
+export function countBy(operations: Operation[]): Record<ActivityFilter, number> {
+  return {
+    all: operations.length,
+    unlocks: operations.filter((op) => matchesFilter(op, "unlocks")).length,
+    failed: operations.filter((op) => matchesFilter(op, "failed")).length,
+    alarms: operations.filter((op) => matchesFilter(op, "alarms")).length,
+  };
+}

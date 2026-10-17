@@ -47,6 +47,8 @@ ACTION_UNLOCK: Final = "unlock"
 ACTION_LOCK: Final = "lock"
 ACTION_OTHER: Final = "other"
 
+VIA_HOME_ASSISTANT: Final = "home_assistant"
+
 _UNLOCKS: Final[dict[int, str]] = {
     LogOperate.MOBILE_UNLOCK: METHOD_APP,
     LogOperate.SERVER_UNLOCK: METHOD_APP,
@@ -90,8 +92,11 @@ class Operation:
     time: dt.datetime | None
     battery: int
     credential: str | None
-    # The name Home Assistant keeps for the keypad code used, never the code itself.
+    # The name Home Assistant keeps for the keypad code used, never the code itself, or the
+    # Home Assistant user who pressed unlock.
     user: str | None = None
+    # "home_assistant" when the record is an unlock or lock Home Assistant itself sent.
+    via: str | None = None
 
     def as_event_data(self) -> dict[str, str | int | None]:
         """Return the attributes of the event fired for this operation."""
@@ -102,6 +107,7 @@ class Operation:
             "battery": self.battery,
             "credential": self.credential,
             "user": self.user,
+            "via": self.via,
         }
 
 

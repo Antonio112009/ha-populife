@@ -107,13 +107,13 @@ class PopulifeLock(PopulifeEntity, LockEntity):
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the safe."""
         await self.async_check_access()
-        await self.coordinator.async_lock()
+        await self.coordinator.async_lock(await self.async_actor())
 
     @override
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the safe."""
         await self.async_check_access()
-        await self.coordinator.async_unlock()
+        await self.coordinator.async_unlock(await self.async_actor())
 
     async def async_add_passcode(
         self,

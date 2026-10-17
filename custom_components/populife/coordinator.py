@@ -10,7 +10,7 @@ afterwards to free the adapter or ESPHome proxy slot.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import logging
 from time import monotonic
 from typing import TYPE_CHECKING, Any, override
@@ -40,6 +40,7 @@ from homeassistant.helpers.typing import UNDEFINED
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ATTRIBUTION_WINDOW_SECONDS,
     BATTERY_OK_LEVEL,
     CONF_SHOW_PASSCODES,
     DISCONNECT_DELAY_SECONDS,
@@ -50,7 +51,14 @@ from .const import (
     LOW_BATTERY_LEVEL,
     REFRESH_RETRY_SECONDS,
 )
-from .operation_log import ACTION_UNLOCK, Operation, describe
+from .operation_log import (
+    ACTION_LOCK,
+    ACTION_UNLOCK,
+    METHOD_APP,
+    VIA_HOME_ASSISTANT,
+    Operation,
+    describe,
+)
 from .passcodes import (
     PASSCODE_MAX_LENGTH,
     PASSCODE_MIN_LENGTH,
@@ -224,6 +232,9 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
             hass, STORAGE_VERSION, f"{DOMAIN}.{config_entry.entry_id}.log"
         )
         self._last_record: tuple[str, int] | None = None
+        # Locks and unlocks sent from Home Assistant, waiting for their log record:
+        # (monotonic time, action, who sent it).
+        self._sent: list[tuple[float, str, str]] = []
 
     async def async_load(self) -> None:
         """Load what the coordinator keeps across restarts."""
@@ -316,13 +327,44 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         elif battery >= BATTERY_OK_LEVEL:
             ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
-    async def async_lock(self) -> None:
-        """Lock the safe."""
+    async def async_lock(self, actor: str | None = None) -> None:
+        """Lock the safe; `actor` is who asked, for the log."""
         await self._async_command(TTLockClient.lock, LockState.LOCKED, unlocking=False)
+        self._async_note_sent(ACTION_LOCK, actor)
 
-    async def async_unlock(self) -> None:
-        """Unlock the safe."""
+    async def async_unlock(self, actor: str | None = None) -> None:
+        """Unlock the safe; `actor` is who asked, for the log."""
         await self._async_command(TTLockClient.unlock, LockState.UNLOCKED, unlocking=True)
+        self._async_note_sent(ACTION_UNLOCK, actor)
+
+    @callback
+    def _async_note_sent(self, action: str, actor: str | None) -> None:
+        """Remember who sent a command, so its log record can name them.
+
+        The safe logs Home Assistant's commands as made by its Bluetooth key, the same key
+        for every Home Assistant user; only Home Assistant knows who pressed the button.
+        """
+        now = monotonic()
+        self._sent = [s for s in self._sent if now - s[0] < ATTRIBUTION_WINDOW_SECONDS]
+        if actor is None:
+            return
+        self._sent.append((now, action, actor))
+        if action == ACTION_UNLOCK:
+            self.state.last_unlock = dt_util.now()
+            self.state.last_unlock_method = METHOD_APP
+            self.state.last_unlock_user = actor
+            self.async_update_listeners()
+
+    def _attribute(self, operation: Operation) -> Operation:
+        """Name the Home Assistant user behind an app lock or unlock Home Assistant sent."""
+        if operation.method != METHOD_APP:
+            return operation
+        now = monotonic()
+        for index, (sent, action, actor) in enumerate(self._sent):
+            if action == operation.action and now - sent < ATTRIBUTION_WINDOW_SECONDS:
+                del self._sent[index]
+                return replace(operation, user=actor, via=VIA_HOME_ASSISTANT)
+        return operation
 
     async def _async_command(
         self,
@@ -567,7 +609,10 @@ class PopulifeCoordinator(PassiveBluetoothDataUpdateCoordinator):
         new = (
             []
             if baseline is None
-            else sorted((op for op in dated if _order(op) > baseline), key=_order)
+            else [
+                self._attribute(op)
+                for op in sorted((op for op in dated if _order(op) > baseline), key=_order)
+            ]
         )
         unlocks = [op for op in (dated if baseline is None else new) if op.action == ACTION_UNLOCK]
         if unlocks:

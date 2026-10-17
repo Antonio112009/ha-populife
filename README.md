@@ -46,6 +46,39 @@ safe. Remote access then goes through your Home Assistant instance.
 - **Modern stack.** Built for Home Assistant 2026.10 on Python 3.14, with strict typing, about
   99% test coverage, and hassfest, HACS and CodeQL checks on every commit.
 
+## The Safe panel
+
+The integration adds a **Safe** page to the sidebar: the safe's state with a big lock / unlock
+button, its passcodes by name, a week of activity, and the enrolled fingerprints.
+
+| Light | Dark, in Russian | Phone |
+| :---: | :---: | :---: |
+| ![Safe panel](docs/screenshots/panel-light.png) | ![Safe panel, dark](docs/screenshots/panel-dark-ru.png) | ![Safe panel on a phone](docs/screenshots/panel-mobile.png) |
+
+- **Hold to unlock**: press and hold the round button until its ring fills; a tap locks. The
+  state follows the safe live, with the last opening: *38 minutes ago · Mama · Keypad*.
+- **Status at a glance**: tiles for battery (with a level bar, coloured when low), signal bars,
+  clock drift with **Sync clock** when it's a minute or more off, and the auto-lock delay.
+- **Passcodes**: by name with a colour avatar, masked until revealed, when each was last used, a
+  bar showing how much of a temporary code's window is left. Tap a code to copy it; **Share**
+  opens the phone's share sheet (Telegram, WhatsApp, Messages, …) with a ready message, or copies
+  that message on a computer.
+- **Add passcode**: a code is generated as the form opens, so it's name → how long → add. Temporary
+  codes have one-tap windows (24 hours, today, this weekend, a week) or a custom one: starts right
+  away or at a set time, stops at a date and time, with how long it works spelled out. A sentence
+  says who can open it with which code and when, and the result screen offers copy and share.
+- **Activity**: a timeline grouped by day (today, yesterday, …): who opened it and how, failed
+  attempts and alarms. Counters for openings, failed attempts and alarms double as filters.
+  Unlocks and locks sent from Home Assistant name the Home Assistant user who pressed the button
+  (*Opened · App · via Home Assistant*, with Anton's avatar), or *Automation*; the safe itself
+  only knows it was the app.
+- Follows your Home Assistant theme, light or dark, and your language (English or Russian).
+
+![Adding a temporary passcode](docs/screenshots/panel-add-passcode.png)
+
+Only admins and allowed users see the controls and full passcodes; everyone else sees an
+explanation. The panel runs every action through the same checks as the entities.
+
 ## How it works
 
 ```mermaid
@@ -279,6 +312,7 @@ logger:
 - [x] Low-battery repair issue
 - [x] Passcode console with names, temporary windows, "unlocked by" and an admin dashboard
 - [x] Access control: admins and allowed users only, masked passcodes for everyone else
+- [x] Safe panel in the sidebar: state, passcodes, activity and fingerprints in one place
 - [x] Metrics read from the safe: clock drift, fingerprint and passcode counts, features and
       properties, volume, refresh button
 - [ ] Optional [Populife Open API](https://open.populife.co/doc/index_en.html) support:
@@ -292,6 +326,18 @@ logger:
 uv sync
 uv run pre-commit install
 uv run pytest
+```
+
+The panel lives in [`frontend/`](frontend) (TypeScript, Lit, Vite) and is built into
+`custom_components/populife/frontend/populife-panel.js`, which is committed so HACS installs it
+with the integration. CI fails if the committed build doesn't match the sources.
+
+```bash
+cd frontend
+npm ci
+npm run dev    # the panel against a mocked Home Assistant, at /dev/index.html
+npm test
+npm run build  # rebuild the panel, then commit the result
 ```
 
 | Check | Tooling |
