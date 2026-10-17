@@ -9,6 +9,7 @@ import {
   countBy,
   dayName,
   defaultWindow,
+  formatDuration,
   groupByDay,
   hueFor,
   initials,
@@ -57,11 +58,21 @@ describe("codes", () => {
 });
 
 describe("validity window", () => {
-  it("needs an end after the start", () => {
-    expect(checkWindow("2026-11-07T09:00", "")).toBe("missing_end");
-    expect(checkWindow("2026-11-07T09:00", "2026-11-07T08:00")).toBe("end_before_start");
-    expect(checkWindow("", "2026-11-07T08:00")).toBeNull();
-    expect(checkWindow("2026-11-07T09:00", "2026-11-08T09:00")).toBeNull();
+  it("needs an end after the start, and in the future", () => {
+    const now = new Date(2026, 9, 17, 12, 0);
+    expect(checkWindow("2026-11-07T09:00", "", now)).toBe("missing_end");
+    expect(checkWindow("2026-11-07T09:00", "2026-11-07T08:00", now)).toBe("end_before_start");
+    expect(checkWindow("", "2026-11-07T08:00", now)).toBeNull();
+    expect(checkWindow("", "2026-10-17T11:00", now)).toBe("end_in_past");
+    expect(checkWindow("2026-11-07T09:00", "2026-11-08T09:00", now)).toBeNull();
+  });
+
+  it("says how long a window lasts, in two units at most", () => {
+    const hour = 3_600_000;
+    expect(formatDuration(51 * hour + 20 * 60_000, "en")).toBe("2 days 3 hours");
+    expect(formatDuration(48 * hour, "en")).toBe("2 days");
+    expect(formatDuration(90 * 60_000, "ru")).toBe("1 час 30 минут");
+    expect(formatDuration(10_000, "en")).toBe("1 minute");
   });
 
   it("defaults to the next 24 hours from the current minute", () => {

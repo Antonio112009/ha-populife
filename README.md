@@ -60,10 +60,13 @@ button, its passcodes by name, a week of activity, and the enrolled fingerprints
 - **Status at a glance**: tiles for battery (with a level bar, coloured when low), signal bars,
   clock drift with **Sync clock** when it's a minute or more off, and the auto-lock delay.
 - **Passcodes**: by name with a colour avatar, masked until revealed, when each was last used, a
-  bar showing how much of a temporary code's window is left, copy/share and delete.
+  bar showing how much of a temporary code's window is left. Tap a code to copy it; **Share**
+  opens the phone's share sheet (Telegram, WhatsApp, Messages, …) with a ready message, or copies
+  that message on a computer.
 - **Add passcode**: a code is generated as the form opens, so it's name → how long → add. Temporary
-  codes have one-tap windows (24 hours, today, this weekend, a week) or a custom one, a sentence
-  spells out who can open it with which code and when, and the result screen offers copy and share.
+  codes have one-tap windows (24 hours, today, this weekend, a week) or a custom one: starts right
+  away or at a set time, stops at a date and time, with how long it works spelled out. A sentence
+  says who can open it with which code and when, and the result screen offers copy and share.
 - **Activity**: a timeline grouped by day (today, yesterday, …): who opened it and how, failed
   attempts and alarms. Counters for openings, failed attempts and alarms double as filters.
   Unlocks and locks sent from Home Assistant name the Home Assistant user who pressed the button

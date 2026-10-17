@@ -1,5 +1,6 @@
 /** Dev harness: mounts the panel against the mocked Home Assistant. */
 
+import { toLocalInput } from "../src/logic";
 import "../src/populife-panel";
 import type { PopulifePanel } from "../src/populife-panel";
 import { createMockHass } from "./mock-hass";
@@ -58,16 +59,31 @@ document.addEventListener("hass-notification", (event) => {
   console.info("toast:", (event as CustomEvent<{ message: string }>).detail.message);
 });
 
-// ?dialog opens the add-passcode dialog (?temporary picks a temporary code), for screenshots.
+// ?dialog opens the add-passcode dialog (?temporary picks a temporary code, ?custom a custom
+// window), for screenshots.
 if (flag("dialog")) {
   setTimeout(() => {
     const safe = panel.shadowRoot?.querySelector("populife-safe");
     const dialog = safe?.shadowRoot?.querySelector("populife-passcode-dialog") as
-      (HTMLElement & { open(): void; _name: string; _temporary: boolean }) | null;
+      | (HTMLElement & {
+          open(): void;
+          _name: string;
+          _temporary: boolean;
+          _preset: string;
+          _end: string;
+        })
+      | null;
     dialog?.open();
     if (dialog) {
       dialog._name = flag("ru") ? "Гость" : "Guest";
-      dialog._temporary = flag("temporary");
+      dialog._temporary = flag("temporary") || flag("custom");
+      if (flag("custom")) {
+        const end = new Date();
+        end.setDate(end.getDate() + 2);
+        end.setHours(18, 0, 0, 0);
+        dialog._preset = "custom";
+        dialog._end = toLocalInput(end);
+      }
     }
   }, 700);
 }

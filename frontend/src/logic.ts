@@ -22,12 +22,37 @@ export function checkCode(code: string, known: Iterable<string>): CodeProblem | 
   return conflicts(code, known) === null ? null : "conflict";
 }
 
-export type WindowProblem = "missing_end" | "end_before_start";
+export type WindowProblem = "missing_end" | "end_in_past" | "end_before_start";
 
-export function checkWindow(start: string, end: string): WindowProblem | null {
+/** Check a validity window; an empty `start` means "from now". */
+export function checkWindow(
+  start: string,
+  end: string,
+  now: Date = new Date(),
+): WindowProblem | null {
   if (end === "") return "missing_end";
-  if (start !== "" && new Date(end) <= new Date(start)) return "end_before_start";
+  const until = new Date(end);
+  if (until <= now) return "end_in_past";
+  if (start !== "" && until <= new Date(start)) return "end_before_start";
   return null;
+}
+
+/** A duration as its two largest units, e.g. "2 days 3 hours", in the user's language. */
+export function formatDuration(milliseconds: number, language: string): string {
+  const minutes = Math.max(Math.round(milliseconds / 60_000), 1);
+  const parts: [number, "day" | "hour" | "minute"][] = [
+    [Math.floor(minutes / 1440), "day"],
+    [Math.floor((minutes % 1440) / 60), "hour"],
+    [minutes % 60, "minute"],
+  ];
+  const first = parts.findIndex(([value]) => value > 0);
+  return parts
+    .slice(first, first + 2)
+    .filter(([value]) => value > 0)
+    .map(([value, unit]) =>
+      new Intl.NumberFormat(language, { style: "unit", unit, unitDisplay: "long" }).format(value),
+    )
+    .join(" ");
 }
 
 export type PasscodeStatus = "permanent" | "upcoming" | "active" | "expired";

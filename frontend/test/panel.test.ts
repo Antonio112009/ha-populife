@@ -72,6 +72,17 @@ describe("panel", () => {
     expect(text(root, ".passcodes .code")[0]).toBe("482916");
   });
 
+  it("copies a code when it is tapped", async () => {
+    // happy-dom isn't a secure context; Home Assistant over https is.
+    Object.defineProperty(window, "isSecureContext", { value: true, configurable: true });
+    const { safe, root } = await mount();
+    (root.querySelector(".passcodes button.code") as HTMLButtonElement).click();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await safe.updateComplete;
+    expect(await navigator.clipboard.readText()).toBe("482916");
+    expect(root.querySelector(".passcodes button.code")?.classList.contains("copied")).toBe(true);
+  });
+
   it("filters the activity", async () => {
     const { safe, root } = await mount();
     const failed = root.querySelector<HTMLButtonElement>(".filter.failed");
@@ -143,8 +154,16 @@ describe("panel", () => {
       "Custom",
     ]);
     expect(dlg.querySelector("input[type=datetime-local]")).toBeNull();
+    expect(text(dlg, ".duration")).toEqual(["Works for 1 day"]);
     [...dlg.querySelectorAll<HTMLButtonElement>(".presets button")].at(-1)?.click();
     await dialog.updateComplete;
-    expect(dlg.querySelectorAll("input[type=datetime-local]").length).toBe(2);
+    // Custom: starts right away, so only the end is asked for, as a date and a time.
+    expect(text(dlg, ".mini-segmented button.selected")).toEqual(["Right away"]);
+    expect(dlg.querySelector("#start-date")).toBeNull();
+    expect(dlg.querySelector("#end-date")).not.toBeNull();
+    expect(dlg.querySelector("#end-time")).not.toBeNull();
+    dlg.querySelectorAll<HTMLButtonElement>(".mini-segmented button")[1].click();
+    await dialog.updateComplete;
+    expect(dlg.querySelector("#start-date")).not.toBeNull();
   });
 });

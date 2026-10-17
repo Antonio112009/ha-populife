@@ -27,6 +27,7 @@ import {
 } from "./logic";
 import type { NewPasscode, PopulifePasscodeDialog } from "./passcode-dialog";
 import "./passcode-dialog";
+import { copyText } from "./clipboard";
 import { shared } from "./styles";
 import type { HassEntity, HomeAssistant, Operation, Passcode, PasscodeList, Safe } from "./types";
 
@@ -42,6 +43,7 @@ export class PopulifeSafeView extends LitElement {
     _operations: { state: true },
     _filter: { state: true },
     _revealed: { state: true },
+    _copied: { state: true },
     _busy: { state: true },
     _confirm: { state: true },
   };
@@ -53,6 +55,8 @@ export class PopulifeSafeView extends LitElement {
   declare _operations: Operation[] | null;
   declare _filter: ActivityFilter;
   declare _revealed: Set<string>;
+  declare _copied: string | null;
+  private copiedTimer?: ReturnType<typeof setTimeout>;
   declare _busy: string | null;
   declare _confirm: { heading: string; text: string; label: string; danger: boolean };
 
@@ -65,6 +69,7 @@ export class PopulifeSafeView extends LitElement {
     this._operations = null;
     this._filter = "all";
     this._revealed = new Set();
+    this._copied = null;
     this._busy = null;
     this._confirm = { heading: "", text: "", label: "", danger: false };
   }
@@ -225,22 +230,37 @@ export class PopulifeSafeView extends LitElement {
     return t("share_text", { safe: this.safe.title, code: passcode.code, window });
   }
 
-  private async share(passcode: Passcode): Promise<void> {
+  /** Open the system share sheet (phones, Safari); copy the message where there is none. */
+  private async share(passcode: Passcode, host?: Node): Promise<boolean> {
     const text = this.shareText(passcode);
     if ("share" in navigator) {
       try {
         await navigator.share({ text });
-        return;
-      } catch {
-        // Cancelled, or not allowed here: fall back to copying.
+        return true;
+      } catch (error) {
+        // Closing the sheet is a choice, not a failure.
+        if (error instanceof DOMException && error.name === "AbortError") return false;
       }
     }
-    await this.copy(text);
+    return this.copy(text, this.t("copied"), host);
   }
 
-  private async copy(text: string): Promise<void> {
-    await navigator.clipboard.writeText(text);
-    this.toast(this.t("copied"));
+  private async copy(text: string, done: string, host?: Node): Promise<boolean> {
+    try {
+      await copyText(text, host);
+      this.toast(done);
+      return true;
+    } catch (error) {
+      this.toast(this.t("failed", { error: errorText(error) }));
+      return false;
+    }
+  }
+
+  private async copyCode(code: string): Promise<void> {
+    if (!(await this.copy(code, this.t("code_copied")))) return;
+    this._copied = code;
+    clearTimeout(this.copiedTimer);
+    this.copiedTimer = setTimeout(() => (this._copied = null), 1500);
   }
 
   private toggleReveal(code: string): void {
@@ -267,14 +287,16 @@ export class PopulifeSafeView extends LitElement {
         .safe=${this.safe}
         .knownCodes=${this._list?.passcodes.map((p) => p.code) ?? []}
         .onSubmit=${(passcode: NewPasscode) => this.addPasscode(passcode)}
-        .onShare=${(passcode: NewPasscode, share: boolean) => {
+        .onShare=${(passcode: NewPasscode, share: boolean, host: Node) => {
           const added: Passcode = {
             ...passcode,
             name: passcode.name || null,
             type: null,
             on_safe: true,
           };
-          return share ? this.share(added) : this.copy(this.shareText(added));
+          return share
+            ? this.share(added, host)
+            : this.copy(this.shareText(added), this.t("copied"), host);
         }}
       ></populife-passcode-dialog>
       <populife-confirm
@@ -522,7 +544,17 @@ export class PopulifeSafeView extends LitElement {
           ${this.statusChip(passcode, status)}
         </div>
         <div class="small muted">
-          <span class="code">${revealed ? passcode.code : mask(passcode.code)}</span>
+          <button
+            class="code ${this._copied === passcode.code ? "copied" : ""}"
+            title=${t("tap_to_copy")}
+            aria-label=${`${t("copy")} ${t("code").toLowerCase()}`}
+            @click=${() => void this.copyCode(passcode.code)}
+          >
+            ${revealed ? passcode.code : mask(passcode.code)}
+            <ha-icon
+              icon=${this._copied === passcode.code ? "mdi:check" : "mdi:content-copy"}
+            ></ha-icon>
+          </button>
           ${
             passcode.on_safe ? nothing : html`<span class="chip neutral">${t("not_on_safe")}</span>`
           }
@@ -1048,13 +1080,39 @@ export class PopulifeSafeView extends LitElement {
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .code {
+      button.code {
         background: var(--secondary-background-color);
+        border: none;
         border-radius: 6px;
         color: var(--primary-text-color);
         font-family: var(--ha-font-family-code, monospace);
+        font-size: inherit;
+        gap: 4px;
         letter-spacing: 0.15em;
-        padding: 1px 6px;
+        min-height: 0;
+        padding: 1px 4px 1px 6px;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+      }
+      button.code ha-icon {
+        --mdc-icon-size: 13px;
+        opacity: 0.45;
+        transition: opacity 0.15s ease;
+      }
+      button.code:hover ha-icon,
+      button.code:focus-visible ha-icon {
+        opacity: 1;
+      }
+      button.code:hover:not([disabled]) {
+        background: color-mix(in srgb, var(--primary-color) 14%, var(--secondary-background-color));
+      }
+      button.code.copied {
+        background: color-mix(in srgb, var(--success-color, #43a047) 18%, transparent);
+        color: var(--success-color, #43a047);
+      }
+      button.code.copied ha-icon {
+        opacity: 1;
       }
       .passcode.expired .name,
       .passcode.expired .code,

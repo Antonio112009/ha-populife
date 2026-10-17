@@ -6,6 +6,7 @@
 
 import { LitElement, css, html, nothing } from "lit";
 
+import { copyText } from "./clipboard";
 import { type TextKey, translator } from "./i18n";
 import {
   WINDOW_PRESETS,
@@ -13,7 +14,9 @@ import {
   checkCode,
   checkWindow,
   formatDateTime,
+  formatDuration,
   presetWindow,
+  toLocalInput,
 } from "./logic";
 import { shared } from "./styles";
 import type { HomeAssistant, Safe } from "./types";
@@ -35,6 +38,8 @@ export class PopulifePasscodeDialog extends LitElement {
     _temporary: { state: true },
     _preset: { state: true },
     _start: { state: true },
+    _startNow: { state: true },
+    _copied: { state: true },
     _end: { state: true },
     _busy: { state: true },
     _touched: { state: true },
@@ -49,6 +54,9 @@ export class PopulifePasscodeDialog extends LitElement {
   declare _temporary: boolean;
   declare _preset: WindowPreset;
   declare _start: string;
+  /** In a custom window: the code works from the moment it is added. */
+  declare _startNow: boolean;
+  declare _copied: "code" | "message" | null;
   declare _end: string;
   declare _busy: boolean;
   declare _touched: boolean;
@@ -56,8 +64,12 @@ export class PopulifePasscodeDialog extends LitElement {
 
   /** Called with the new passcode; throws to keep the form open. */
   onSubmit: ((passcode: NewPasscode) => Promise<void>) | null = null;
-  /** Called to copy (`share` false) or share an added passcode. */
-  onShare: ((passcode: NewPasscode, share: boolean) => Promise<void>) | null = null;
+  /**
+   * Called to copy (`share` false) or share an added passcode; resolves to whether it did.
+   * `host` is where a copy fallback may put its textarea (the page behind a modal is inert).
+   */
+  onShare: ((passcode: NewPasscode, share: boolean, host: Node) => Promise<boolean>) | null = null;
+  private copiedTimer?: ReturnType<typeof setTimeout>;
 
   constructor() {
     super();
@@ -69,6 +81,8 @@ export class PopulifePasscodeDialog extends LitElement {
     this._name = "";
     this._code = "";
     this._temporary = false;
+    this._startNow = true;
+    this._copied = null;
     this.applyPreset("24h");
     this._busy = false;
     this._touched = false;
@@ -77,11 +91,21 @@ export class PopulifePasscodeDialog extends LitElement {
 
   private applyPreset(preset: WindowPreset): void {
     this._preset = preset;
-    const window = presetWindow(preset, new Date());
+    const now = new Date();
+    const window = presetWindow(preset, now);
     if (window) {
       this._start = window.start;
       this._end = window.end;
+    } else {
+      // Custom starts from the last preset's window; "right away" unless that began later.
+      this._startNow =
+        this._start === "" || new Date(this._start).getTime() <= now.getTime() + 60_000;
     }
+  }
+
+  /** The start to use: empty means from the moment the code is added. */
+  private get start(): string {
+    return this._preset === "custom" && this._startNow ? "" : this._start;
   }
 
   open(): void {
@@ -112,7 +136,7 @@ export class PopulifePasscodeDialog extends LitElement {
 
   private get windowProblem(): TextKey | null {
     if (!this._temporary) return null;
-    const problem = checkWindow(this._start, this._end);
+    const problem = checkWindow(this.start, this._end);
     return problem === null ? null : `error_${problem}`;
   }
 
@@ -128,7 +152,7 @@ export class PopulifePasscodeDialog extends LitElement {
     return {
       name: this._name.trim(),
       code: this._code,
-      start: this._temporary ? this._start : null,
+      start: this._temporary && this.start !== "" ? this.start : null,
       end: this._temporary ? this._end : null,
     };
   }
@@ -159,13 +183,17 @@ export class PopulifePasscodeDialog extends LitElement {
       const [before = "", after = ""] = t(key, { ...values, code: "\u0000" }).split("\u0000");
       return html`${before}<b class="mono">${passcode.code}</b>${after}`;
     };
-    return passcode.end === null
-      ? fill("summary_permanent", { who })
-      : fill("summary_temporary", {
-          who,
-          start: formatDateTime(passcode.start ?? new Date(), this.language),
-          end: formatDateTime(passcode.end, this.language),
-        });
+    const end = passcode.end;
+    if (end === null) return fill("summary_permanent", { who });
+    // A start within the current minute reads as "from now".
+    if (passcode.start === null || new Date(passcode.start).getTime() <= Date.now() + 60_000) {
+      return fill("summary_from_now", { who, end: formatDateTime(end, this.language) });
+    }
+    return fill("summary_temporary", {
+      who,
+      start: formatDateTime(passcode.start, this.language),
+      end: formatDateTime(end, this.language),
+    });
   }
 
   override render() {
@@ -256,6 +284,11 @@ export class PopulifePasscodeDialog extends LitElement {
 
   private renderWindow(problem: TextKey | null) {
     const t = this.t;
+    const valid = this.windowProblem === null;
+    const from = this.start === "" ? new Date() : new Date(this.start);
+    const duration = valid
+      ? formatDuration(new Date(this._end).getTime() - from.getTime(), this.language)
+      : null;
     return html`
       <div class="presets" role="radiogroup">
         ${WINDOW_PRESETS.map(
@@ -273,26 +306,11 @@ export class PopulifePasscodeDialog extends LitElement {
             </button>`,
         )}
       </div>
+      ${this._preset === "custom" ? this.renderCustom(problem) : nothing}
       ${
-        this._preset === "custom"
-          ? html`<div class="window">
-              <label>
-                ${t("valid_from")}
-                <input
-                  type="datetime-local"
-                  .value=${this._start}
-                  @input=${(e: Event) => (this._start = (e.target as HTMLInputElement).value)}
-                />
-              </label>
-              <label>
-                ${t("valid_until")}
-                <input
-                  type="datetime-local"
-                  .value=${this._end}
-                  aria-invalid=${problem !== null}
-                  @input=${(e: Event) => (this._end = (e.target as HTMLInputElement).value)}
-                />
-              </label>
+        duration
+          ? html`<div class="duration">
+              <ha-icon icon="mdi:timer-outline"></ha-icon>${t("works_for", { duration })}
             </div>`
           : nothing
       }
@@ -301,19 +319,139 @@ export class PopulifePasscodeDialog extends LitElement {
     `;
   }
 
+  private renderCustom(problem: TextKey | null) {
+    const t = this.t;
+    return html`<div class="window">
+      <div class="field">
+        <span class="field-label">
+          <ha-icon icon="mdi:play-circle-outline"></ha-icon>${t("starts_label")}
+        </span>
+        <div class="mini-segmented" role="radiogroup" aria-label=${t("starts_label")}>
+          ${([true, false] as const).map(
+            (now) =>
+              html`<button
+                type="button"
+                role="radio"
+                aria-checked=${this._startNow === now}
+                class=${this._startNow === now ? "selected" : ""}
+                @click=${() => {
+                  this._startNow = now;
+                  if (!now && (this._start === "" || new Date(this._start) < new Date())) {
+                    this._start = toLocalInput(new Date());
+                  }
+                }}
+              >
+                ${now ? t("start_now") : t("start_at")}
+              </button>`,
+          )}
+        </div>
+        ${
+          this._startNow
+            ? nothing
+            : this.renderDateTime("start", this._start, (value) => (this._start = value), false)
+        }
+      </div>
+      <div class="field">
+        <span class="field-label">
+          <ha-icon icon="mdi:stop-circle-outline"></ha-icon>${t("stops_label")}
+        </span>
+        ${this.renderDateTime("end", this._end, (value) => (this._end = value), problem !== null)}
+      </div>
+    </div>`;
+  }
+
+  /** A date and a time field for one datetime-local value ("" when the date is cleared). */
+  private renderDateTime(
+    id: string,
+    value: string,
+    set: (value: string) => void,
+    invalid: boolean,
+  ) {
+    const t = this.t;
+    const date = value.slice(0, 10);
+    const time = value.slice(11, 16) || "12:00";
+    return html`<div class="date-time">
+      <input
+        id=${`${id}-date`}
+        type="date"
+        aria-label=${id === "start" ? t("valid_from") : t("valid_until")}
+        min=${toLocalInput(new Date()).slice(0, 10)}
+        .value=${date}
+        aria-invalid=${invalid}
+        @input=${(e: Event) => {
+          const picked = (e.target as HTMLInputElement).value;
+          set(picked ? `${picked}T${time}` : "");
+        }}
+      />
+      <input
+        id=${`${id}-time`}
+        type="time"
+        aria-label=${id === "start" ? t("valid_from") : t("valid_until")}
+        .value=${time}
+        aria-invalid=${invalid}
+        @input=${(e: Event) => {
+          const picked = (e.target as HTMLInputElement).value;
+          if (picked) set(`${date || toLocalInput(new Date()).slice(0, 10)}T${picked}`);
+        }}
+      />
+    </div>`;
+  }
+
+  private async copy(passcode: NewPasscode, what: "code" | "message"): Promise<void> {
+    const host = this.shadowRoot?.querySelector("dialog") ?? document.body;
+    let done = false;
+    if (what === "message") {
+      done = (await this.onShare?.(passcode, false, host)) ?? false;
+    } else {
+      try {
+        await copyText(passcode.code, host);
+        done = true;
+      } catch {
+        // The code stays on screen to copy by hand.
+      }
+    }
+    if (!done) return;
+    this._copied = what;
+    clearTimeout(this.copiedTimer);
+    this.copiedTimer = setTimeout(() => (this._copied = null), 1500);
+  }
+
   private renderAdded(passcode: NewPasscode) {
     const t = this.t;
     return html`
       <div class="added">
         <div class="tick"><ha-icon icon="mdi:check"></ha-icon></div>
         <h2 id="heading">${t("success")}</h2>
-        <div class="big-code mono">${passcode.code}</div>
+        <button
+          class="big-code mono ${this._copied === "code" ? "copied" : ""}"
+          title=${t("tap_to_copy")}
+          @click=${() => void this.copy(passcode, "code")}
+        >
+          ${passcode.code}
+          <ha-icon icon=${this._copied === "code" ? "mdi:check" : "mdi:content-copy"}></ha-icon>
+        </button>
+        <span class="muted small">
+          ${this._copied === "code" ? t("code_copied") : t("tap_to_copy")}
+        </span>
         <p class="summary">${this.summary(passcode)}</p>
         <div class="share">
-          <button @click=${() => void this.onShare?.(passcode, false)}>
-            <ha-icon icon="mdi:content-copy"></ha-icon>${t("copy")}
+          <button
+            class=${this._copied === "message" ? "copied" : ""}
+            @click=${() => void this.copy(passcode, "message")}
+          >
+            <ha-icon
+              icon=${this._copied === "message" ? "mdi:check" : "mdi:content-copy"}
+            ></ha-icon>
+            ${this._copied === "message" ? t("copied") : t("copy")}
           </button>
-          <button @click=${() => void this.onShare?.(passcode, true)}>
+          <button
+            @click=${() =>
+              void this.onShare?.(
+                passcode,
+                true,
+                this.shadowRoot?.querySelector("dialog") ?? document.body,
+              )}
+          >
             <ha-icon icon="mdi:share-variant-outline"></ha-icon>${t("share")}
           </button>
         </div>
@@ -404,14 +542,67 @@ export class PopulifePasscodeDialog extends LitElement {
         padding: 0 12px;
       }
       .window {
+        background: var(--secondary-background-color);
+        border-radius: 16px;
         display: grid;
-        gap: 12px;
-        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        padding: 14px;
       }
-      @media (max-width: 480px) {
-        .window {
-          grid-template-columns: 1fr;
-        }
+      .field {
+        display: grid;
+        gap: 8px;
+      }
+      .field-label {
+        align-items: center;
+        color: var(--secondary-text-color);
+        display: flex;
+        font-size: 0.8rem;
+        font-weight: 500;
+        gap: 6px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .field-label ha-icon {
+        --mdc-icon-size: 18px;
+        color: var(--primary-color);
+      }
+      .mini-segmented {
+        background: var(--card-background-color, #fff);
+        border-radius: 12px;
+        display: grid;
+        gap: 4px;
+        grid-template-columns: 1fr 1fr;
+        padding: 4px;
+      }
+      .mini-segmented button {
+        border: none;
+        border-radius: 9px;
+        font-size: 0.9rem;
+        justify-content: center;
+        min-height: 36px;
+      }
+      .mini-segmented button.selected {
+        background: var(--primary-color);
+        color: var(--text-primary-color, #fff);
+        font-weight: 500;
+      }
+      .date-time {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+      }
+      .date-time input {
+        background: var(--card-background-color, #fff);
+      }
+      .duration {
+        align-items: center;
+        color: var(--primary-color);
+        display: flex;
+        font-weight: 500;
+        gap: 6px;
+      }
+      .duration ha-icon {
+        --mdc-icon-size: 18px;
       }
       [aria-invalid="true"] {
         border-color: var(--error-color);
@@ -448,10 +639,31 @@ export class PopulifePasscodeDialog extends LitElement {
       .tick ha-icon {
         --mdc-icon-size: 32px;
       }
-      .big-code {
+      button.big-code {
+        background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+        border: 1px dashed color-mix(in srgb, var(--primary-color) 40%, transparent);
+        border-radius: 16px;
+        color: var(--primary-text-color);
         font-size: 2.4rem;
         font-weight: 500;
+        gap: 12px;
         letter-spacing: 0.25em;
+        padding: 6px 18px 6px 24px;
+      }
+      button.big-code ha-icon {
+        --mdc-icon-size: 22px;
+        color: var(--primary-color);
+      }
+      button.big-code.copied,
+      .share button.copied {
+        border-color: var(--success-color, #43a047);
+        color: var(--success-color, #43a047);
+      }
+      button.big-code.copied ha-icon {
+        color: var(--success-color, #43a047);
+      }
+      .added > .muted {
+        margin-top: -10px;
       }
       .share {
         display: flex;
