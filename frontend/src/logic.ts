@@ -118,6 +118,7 @@ export function parseOperations(
       action: str(attributes.action) ?? "other",
       user: str(attributes.user),
       credential: str(attributes.credential),
+      via: str(attributes.via),
     });
   }
   return operations.sort((a, b) => b.when.getTime() - a.when.getTime());
@@ -142,4 +143,69 @@ export function formatDateTime(value: string | Date, language: string): string {
   return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(
     typeof value === "string" ? new Date(value) : value,
   );
+}
+
+export type WindowPreset = "24h" | "today" | "weekend" | "week" | "custom";
+export const WINDOW_PRESETS: WindowPreset[] = ["24h", "today", "weekend", "week", "custom"];
+
+/** The window a preset stands for, as datetime-local values; null for "custom". */
+export function presetWindow(
+  preset: WindowPreset,
+  now: Date,
+): { start: string; end: string } | null {
+  const start = new Date(now);
+  start.setSeconds(0, 0);
+  const end = new Date(start);
+  switch (preset) {
+    case "custom":
+      return null;
+    case "24h":
+      end.setDate(end.getDate() + 1);
+      break;
+    case "today":
+      end.setHours(23, 59, 0, 0);
+      break;
+    case "week":
+      end.setDate(end.getDate() + 7);
+      break;
+    case "weekend": {
+      // From Saturday 00:00 (or now, during the weekend) to Sunday 23:59.
+      const day = start.getDay();
+      const toSaturday = day === 6 ? 0 : day === 0 ? -1 : 6 - day;
+      if (day !== 6 && day !== 0) {
+        start.setDate(start.getDate() + toSaturday);
+        start.setHours(0, 0, 0, 0);
+      }
+      end.setTime(start.getTime());
+      end.setDate(end.getDate() + (start.getDay() === 6 ? 1 : 0));
+      end.setHours(23, 59, 0, 0);
+      break;
+    }
+  }
+  return { start: toLocalInput(start), end: toLocalInput(end) };
+}
+
+export type Level = "ok" | "warn" | "bad";
+
+export function batteryLevel(percent: number): Level {
+  if (percent < 20) return "bad";
+  if (percent < 40) return "warn";
+  return "ok";
+}
+
+export type SignalQuality = "excellent" | "good" | "weak";
+
+export function signalQuality(dbm: number): SignalQuality {
+  if (dbm >= -65) return "excellent";
+  if (dbm >= -80) return "good";
+  return "weak";
+}
+
+/** When the code with this name last opened the safe, from the activity. */
+export function lastUsed(name: string | null, operations: Operation[]): Date | null {
+  if (name === null) return null;
+  const used = operations.find(
+    (op) => op.user === name && op.action === "unlock" && op.method === "keypad",
+  );
+  return used ? used.when : null;
 }

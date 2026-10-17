@@ -2,15 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import { actionKey, methodKey, translator } from "../src/i18n";
 import {
+  batteryLevel,
   checkCode,
   checkWindow,
   conflicts,
   defaultWindow,
+  lastUsed,
   mask,
   matchesFilter,
   parseOperations,
   passcodeStatus,
+  presetWindow,
   relativeTime,
+  signalQuality,
   toLocalInput,
 } from "../src/logic";
 import type { Operation, Passcode } from "../src/types";
@@ -101,6 +105,7 @@ describe("activity", () => {
       action,
       user: null,
       credential: null,
+      via: null,
     });
     expect(matchesFilter(op("keypad", "unlock"), "unlocks")).toBe(true);
     expect(matchesFilter(op("keypad", "lock"), "unlocks")).toBe(false);
@@ -129,5 +134,64 @@ describe("translations", () => {
     expect(methodKey("teleport")).toBe("method_other");
     expect(actionKey("unlock")).toBe("action_unlock");
     expect(actionKey("dance")).toBe("action_other");
+  });
+});
+
+describe("presets", () => {
+  // Friday 17 October 2026, 14:20:30.
+  const friday = new Date(2026, 9, 16, 14, 20, 30);
+
+  it("covers the next 24 hours, today, a week, or nothing for custom", () => {
+    expect(presetWindow("24h", friday)).toEqual({
+      start: "2026-10-16T14:20",
+      end: "2026-10-17T14:20",
+    });
+    expect(presetWindow("today", friday)?.end).toBe("2026-10-16T23:59");
+    expect(presetWindow("week", friday)?.end).toBe("2026-10-23T14:20");
+    expect(presetWindow("custom", friday)).toBeNull();
+  });
+
+  it("covers the coming weekend, or the rest of the current one", () => {
+    expect(presetWindow("weekend", friday)).toEqual({
+      start: "2026-10-17T00:00",
+      end: "2026-10-18T23:59",
+    });
+    const saturday = new Date(2026, 9, 17, 10, 0);
+    expect(presetWindow("weekend", saturday)).toEqual({
+      start: "2026-10-17T10:00",
+      end: "2026-10-18T23:59",
+    });
+    const sunday = new Date(2026, 9, 18, 10, 0);
+    expect(presetWindow("weekend", sunday)).toEqual({
+      start: "2026-10-18T10:00",
+      end: "2026-10-18T23:59",
+    });
+  });
+});
+
+describe("status chips", () => {
+  it("grades battery and signal", () => {
+    expect([batteryLevel(86), batteryLevel(30), batteryLevel(12)]).toEqual(["ok", "warn", "bad"]);
+    expect([signalQuality(-60), signalQuality(-75), signalQuality(-90)]).toEqual([
+      "excellent",
+      "good",
+      "weak",
+    ]);
+  });
+
+  it("finds when a named code was last used on the keypad", () => {
+    const at = (iso: string, user: string | null, method = "keypad"): Operation => ({
+      when: new Date(iso),
+      method,
+      action: "unlock",
+      user,
+      credential: null,
+      via: null,
+    });
+    const operations = [at("2026-10-17T10:00:00Z", "Mama"), at("2026-10-16T10:00:00Z", "Guest")];
+    expect(lastUsed("Guest", operations)?.toISOString()).toBe("2026-10-16T10:00:00.000Z");
+    expect(lastUsed("Plumber", operations)).toBeNull();
+    expect(lastUsed(null, operations)).toBeNull();
+    expect(lastUsed("Anton", [at("2026-10-17T10:00:00Z", "Anton", "app")])).toBeNull();
   });
 });

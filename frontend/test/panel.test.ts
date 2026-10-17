@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { createMockHass } from "../dev/mock-hass";
-import type { PopulifeConfirm } from "../src/confirm-dialog";
+import type { PopulifeHoldButton } from "../src/hold-button";
+import type { PopulifePasscodeDialog } from "../src/passcode-dialog";
 import "../src/populife-panel";
 import type { PopulifePanel } from "../src/populife-panel";
 import type { PopulifeSafeView } from "../src/safe-view";
@@ -37,20 +38,27 @@ describe("panel", () => {
     expect(text(root, ".passcodes .chip")).toContain("Expired");
   });
 
-  it("asks before unlocking, then unlocks", async () => {
+  it("unlocks from the hold button, and shows who opened it last", async () => {
     const { hass, safe, root } = await mount();
-    (root.querySelector(".status-actions button") as HTMLButtonElement).click();
-    await safe.updateComplete;
-    const confirm = root.querySelector("populife-confirm") as PopulifeConfirm;
-    await confirm.updateComplete;
-    expect(confirm.shadowRoot?.querySelector("h2")?.textContent).toBe("Unlock S8534_549605?");
-    (confirm.shadowRoot?.querySelector(".actions .primary") as HTMLButtonElement).click();
+    const hold = root.querySelector("populife-hold-button") as PopulifeHoldButton;
+    expect(hold.hold).toBe(true);
+    hold.dispatchEvent(new CustomEvent("activate"));
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(hass.calls.at(-1)).toEqual({
       domain: "lock",
       service: "unlock",
       data: { entity_id: "lock.s8534_549605" },
     });
+    await safe.updateComplete;
+    // Unlocked now: a plain tap locks.
+    expect(hold.hold).toBe(false);
+    expect(text(root, ".chips .chip")).toContain("Auto-locks after 5 s");
+  });
+
+  it("names the Home Assistant user behind an app unlock", async () => {
+    const { root } = await mount();
+    expect(text(root, ".activity li .grow")).toContain("Opened · Anton App · via Home Assistant");
+    expect(text(root, ".passcodes .used")[0]).toMatch(/^used /);
   });
 
   it("reveals a code on request", async () => {
@@ -80,5 +88,53 @@ describe("panel", () => {
   it("speaks Russian to Russian users", async () => {
     const { root } = await mount({ language: "ru" });
     expect(text(root, ".state")).toEqual(["Заперт"]);
+  });
+
+  it("adds a passcode with a generated code and offers to share it", async () => {
+    const { hass, safe, root } = await mount();
+    const dialog = root.querySelector("populife-passcode-dialog") as PopulifePasscodeDialog;
+    dialog.open();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const dlg = dialog.shadowRoot as ShadowRoot;
+    const code = (dlg.querySelector(".code") as HTMLInputElement).value;
+    expect(code).toMatch(/^\d{6}$/);
+    const name = dlg.querySelector("#name") as HTMLInputElement;
+    name.value = "Guest";
+    name.dispatchEvent(new Event("input"));
+    await dialog.updateComplete;
+    expect(text(dlg, ".summary")[0]).toBe(`Guest can open the safe with ${code} at any time.`);
+
+    (dlg.querySelector("button[type=submit]") as HTMLButtonElement).click();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await dialog.updateComplete;
+    expect(hass.calls.at(-1)).toEqual({
+      domain: "populife",
+      service: "add_passcode",
+      data: { entity_id: "lock.s8534_549605", code, name: "Guest" },
+    });
+    expect(text(dlg, ".big-code")).toEqual([code]);
+    await safe.updateComplete;
+    expect(text(root, ".passcodes .name")).toContain("Guest");
+  });
+
+  it("offers presets for a temporary code", async () => {
+    const { root } = await mount();
+    const dialog = root.querySelector("populife-passcode-dialog") as PopulifePasscodeDialog;
+    dialog.open();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const dlg = dialog.shadowRoot as ShadowRoot;
+    dlg.querySelectorAll<HTMLButtonElement>(".segmented button")[1].click();
+    await dialog.updateComplete;
+    expect(text(dlg, ".presets button")).toEqual([
+      "24 hours",
+      "Today",
+      "This weekend",
+      "A week",
+      "Custom",
+    ]);
+    expect(dlg.querySelector("input[type=datetime-local]")).toBeNull();
+    [...dlg.querySelectorAll<HTMLButtonElement>(".presets button")].at(-1)?.click();
+    await dialog.updateComplete;
+    expect(dlg.querySelectorAll("input[type=datetime-local]").length).toBe(2);
   });
 });

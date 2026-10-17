@@ -24,6 +24,7 @@ export const SAFE: Safe = {
     operation: `event.${PREFIX}_operation`,
     refresh: `button.${PREFIX}_refresh`,
     sync_clock: `button.${PREFIX}_sync_clock`,
+    auto_lock: `number.${PREFIX}_auto_lock_delay`,
   },
 };
 
@@ -91,16 +92,17 @@ export function createMockHass(options: MockOptions = {}): HomeAssistant & {
     [e.fingerprints]: entity(e.fingerprints, "2"),
     [e.passcodes]: entity(e.passcodes, String(passcodes.length)),
     [e.operation]: entity(e.operation, iso(lastUnlock)),
+    [e.auto_lock]: entity(e.auto_lock, "5"),
   };
 
-  const operations: [number, string, string, string | null, string | null][] = [
-    [38, "keypad", "unlock", "Mama", null],
-    [95, "fingerprint", "unlock", null, "2"],
-    [180, "failed", "other", null, null],
-    [60 * 26, "app", "unlock", null, null],
-    [60 * 27, "app", "lock", null, null],
-    [60 * 49, "keypad", "unlock", "Guest this weekend", null],
-    [60 * 75, "alarm", "other", null, null],
+  const operations: [number, string, string, string | null, string | null, string | null][] = [
+    [38, "keypad", "unlock", "Mama", null, null],
+    [95, "fingerprint", "unlock", null, "2", null],
+    [180, "failed", "other", null, null, null],
+    [60 * 26, "app", "unlock", "Anton", null, "home_assistant"],
+    [60 * 27, "app", "lock", "Anton", null, "home_assistant"],
+    [60 * 49, "keypad", "unlock", "Guest this weekend", null, null],
+    [60 * 75, "alarm", "other", null, null, null],
   ];
 
   const calls: { domain: string; service: string; data: Record<string, unknown> }[] = [];
@@ -135,10 +137,17 @@ export function createMockHass(options: MockOptions = {}): HomeAssistant & {
           return { code: String(100000 + Math.floor(Math.random() * 899999)) } as T;
         case "history/history_during_period":
           return {
-            [e.operation]: operations.map(([minutes, method, action, user, credential]) => ({
+            [e.operation]: operations.map(([minutes, method, action, user, credential, via]) => ({
               s: iso(minutesAgo(minutes)),
               lu: minutesAgo(minutes).getTime() / 1000,
-              a: { event_type: method, action, user, credential, time: iso(minutesAgo(minutes)) },
+              a: {
+                event_type: method,
+                action,
+                user,
+                credential,
+                via,
+                time: iso(minutesAgo(minutes)),
+              },
             })),
           } as T;
         default:

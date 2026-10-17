@@ -194,6 +194,12 @@
           },
           "user": {
             "name": "User"
+          },
+          "via": {
+            "name": "Via",
+            "state": {
+              "home_assistant": "Home Assistant"
+            }
           }
         }
       }

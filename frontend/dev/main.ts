@@ -57,3 +57,17 @@ hass.callService = async (...args: Parameters<typeof original>) => {
 document.addEventListener("hass-notification", (event) => {
   console.info("toast:", (event as CustomEvent<{ message: string }>).detail.message);
 });
+
+// ?dialog opens the add-passcode dialog (?temporary picks a temporary code), for screenshots.
+if (flag("dialog")) {
+  setTimeout(() => {
+    const safe = panel.shadowRoot?.querySelector("populife-safe");
+    const dialog = safe?.shadowRoot?.querySelector("populife-passcode-dialog") as
+      (HTMLElement & { open(): void; _name: string; _temporary: boolean }) | null;
+    dialog?.open();
+    if (dialog) {
+      dialog._name = flag("ru") ? "Гость" : "Guest";
+      dialog._temporary = flag("temporary");
+    }
+  }, 700);
+}

@@ -6,6 +6,8 @@ from typing import Final
 
 DOMAIN: Final = "populife"
 MANUFACTURER: Final = "Populife"
+# Who an unlock is attributed to when an automation or script sent it without a user.
+AUTOMATION: Final = "Automation"
 
 # Config entry data keys.
 CONF_KEY: Final = "key"
@@ -55,6 +57,9 @@ BATTERY_OK_LEVEL: Final = 25
 # After startup Home Assistant connects once to read the state, device info and settings;
 # if the safe can't be reached it tries again on an advertisement this much later.
 REFRESH_RETRY_SECONDS: Final = 300.0
+# How long a lock or unlock sent from Home Assistant waits for its log record, which then gets
+# the name of the Home Assistant user who sent it.
+ATTRIBUTION_WINDOW_SECONDS: Final = 600.0
 # At most one connection per this interval to fetch log records the safe flags as new.
 LOG_SYNC_MIN_INTERVAL_SECONDS: Final = 60.0
 

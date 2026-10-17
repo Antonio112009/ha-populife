@@ -55,15 +55,20 @@ button, its passcodes by name, a week of activity, and the enrolled fingerprints
 | :---: | :---: | :---: |
 | ![Safe panel](docs/screenshots/panel-light.png) | ![Safe panel, dark](docs/screenshots/panel-dark-ru.png) | ![Safe panel on a phone](docs/screenshots/panel-mobile.png) |
 
-- **Unlock with a confirmation**, lock with one tap; the state follows the safe live.
-- **Passcodes**: masked until you reveal them, with copy/share for a guest and delete. **Add
-  passcode** opens a form with a name, a generated or typed code (prefix clashes are caught as
-  you type), and a permanent / temporary switch with a calendar for the window.
-- **Activity**: who opened it and how (keypad, fingerprint, app, card), failed attempts and
-  alarms, with filters.
-- **Battery, signal and clock drift**, with **Sync clock** when the safe's clock is off by a
-  minute or more.
+- **Hold to unlock**: press and hold the round button until its ring fills; a tap locks. The
+  state follows the safe live, with the last opening: *38 minutes ago · Mama · Keypad*.
+- **Status at a glance**: battery (coloured when low), signal quality, clock drift with
+  **Sync clock** when it's a minute or more off, and the auto-lock delay.
+- **Passcodes**: by name, masked until revealed, when each was last used, copy/share and delete.
+- **Add passcode**: a code is generated as the form opens, so it's name → how long → add. Temporary
+  codes have one-tap windows (24 hours, today, this weekend, a week) or a custom one, a sentence
+  spells out who can open it with which code and when, and the result screen offers copy and share.
+- **Activity**: who opened it and how, failed attempts and alarms, with filters. Unlocks and locks
+  sent from Home Assistant name the Home Assistant user who pressed the button (*Opened · Anton ·
+  App · via Home Assistant*), or *Automation*; the safe itself only knows it was the app.
 - Follows your Home Assistant theme, light or dark, and your language (English or Russian).
+
+![Adding a temporary passcode](docs/screenshots/panel-add-passcode.png)
 
 Only admins and allowed users see the controls and full passcodes; everyone else sees an
 explanation. The panel runs every action through the same checks as the entities.

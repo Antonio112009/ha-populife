@@ -4,10 +4,14 @@ import { LitElement, type PropertyValues, css, html, nothing } from "lit";
 
 import type { PopulifeConfirm } from "./confirm-dialog";
 import "./confirm-dialog";
+import "./hold-button";
 import { actionKey, methodKey, translator } from "./i18n";
 import {
   type ActivityFilter,
   METHOD_ICONS,
+  batteryLevel,
+  lastUsed,
+  signalQuality,
   formatDateTime,
   mask,
   matchesFilter,
@@ -152,23 +156,12 @@ export class PopulifeSafeView extends LitElement {
     return dialog ? dialog.ask() : false;
   }
 
-  private async toggleLock(locked: boolean): Promise<void> {
+  private async setLocked(locked: boolean): Promise<void> {
     const lock = this.safe.entities.lock;
     if (!lock) return;
-    const t = this.t;
-    if (
-      !locked ||
-      (await this.confirm(
-        t("confirm_unlock", { name: this.safe.title }),
-        t("confirm_unlock_text"),
-        t("unlock"),
-        false,
-      ))
-    ) {
-      await this.run("lock", () =>
-        this.hass.callService("lock", locked ? "unlock" : "lock", { entity_id: lock }),
-      );
-    }
+    await this.run("lock", () =>
+      this.hass.callService("lock", locked ? "lock" : "unlock", { entity_id: lock }),
+    );
   }
 
   private press(button: "refresh" | "sync_clock"): Promise<boolean> {
@@ -195,7 +188,6 @@ export class PopulifeSafeView extends LitElement {
       this.toast(this.t("failed", { error: errorText(error) }));
       throw error;
     }
-    this.toast(this.t("added", { name: passcode.name || this.t("unnamed") }));
     await this.loadPasscodes();
   }
 
@@ -266,6 +258,15 @@ export class PopulifeSafeView extends LitElement {
         .safe=${this.safe}
         .knownCodes=${this._list?.passcodes.map((p) => p.code) ?? []}
         .onSubmit=${(passcode: NewPasscode) => this.addPasscode(passcode)}
+        .onShare=${(passcode: NewPasscode, share: boolean) => {
+          const added: Passcode = {
+            ...passcode,
+            name: passcode.name || null,
+            type: null,
+            on_safe: true,
+          };
+          return share ? this.share(added) : this.copy(this.shareText(added));
+        }}
       ></populife-passcode-dialog>
       <populife-confirm
         .heading=${this._confirm.heading}
@@ -290,75 +291,11 @@ export class PopulifeSafeView extends LitElement {
         : reachable
           ? t("unknown")
           : t("unavailable");
-    const battery = this.entity("battery")?.state;
-    const signal = this.entity("signal")?.state;
-    const drift = Number(this.entity("clock_drift")?.state);
-    const lastUnlock = this.entity("last_unlock")?.state;
-    const lastBy = this.entity("last_unlocked_by")?.state;
-    const lastMethod = this.entity("last_unlock_method")?.state;
-    const hasLast = lastUnlock !== undefined && !Number.isNaN(Date.parse(lastUnlock));
     return html`
-      <section class="card wide status ${locked ? "is-locked" : "is-open"}">
-        <div class="lock-icon">
-          <ha-icon
-            icon=${locked ? "mdi:lock" : reachable ? "mdi:lock-open-variant" : "mdi:lock-question"}
-          ></ha-icon>
-        </div>
-        <div class="status-main">
-          <h2>${this.safe.title}</h2>
-          <div class="state">${stateLabel}</div>
-          <div class="muted small">
-            ${t("last_unlock")}:
-            ${
-              hasLast
-                ? html`${relativeTime(new Date(lastUnlock), new Date(), this.language)}
-                  ${lastBy && lastBy !== "unknown" ? t("last_unlock_by", { user: lastBy }) : nothing}
-                  ${
-                    lastMethod && lastMethod in METHOD_ICONS
-                      ? html`· ${t(methodKey(lastMethod))}`
-                      : nothing
-                  }`
-                : t("never")
-            }
-          </div>
-        </div>
-        <div class="status-actions">
-          ${
-            this.safe.can_operate
-              ? html`<button
-                  class="primary big"
-                  ?disabled=${!reachable || moving || this._busy === "lock"}
-                  @click=${() => void this.toggleLock(locked)}
-                >
-                  <ha-icon icon=${locked ? "mdi:lock-open-variant" : "mdi:lock"}></ha-icon>
-                  ${locked ? t("unlock") : t("lock")}
-                </button>`
-              : nothing
-          }
-        </div>
-        <div class="metrics">
-          ${metric("mdi:battery", t("battery"), battery !== undefined ? `${battery}%` : "—")}
-          ${metric("mdi:bluetooth", t("signal"), signal && signal !== "unknown" ? `${signal} dBm` : "—")}
-          ${metric(
-            "mdi:clock-outline",
-            t("clock"),
-            Number.isNaN(drift)
-              ? "—"
-              : Math.abs(drift) < 60
-                ? t("clock_ok")
-                : t("clock_off", { seconds: Math.round(drift) }),
-          )}
-          <div class="metric-actions">
-            ${
-              this.safe.can_operate && this.safe.entities.sync_clock && Math.abs(drift) >= 60
-                ? html`<button
-                    ?disabled=${this._busy !== null}
-                    @click=${() => void this.press("sync_clock")}
-                  >
-                    <ha-icon icon="mdi:clock-check-outline"></ha-icon>${t("sync_clock")}
-                  </button>`
-                : nothing
-            }
+      <section class="card wide hero ${locked ? "is-locked" : reachable ? "is-open" : "is-gone"}">
+        <div class="hero-text">
+          <div class="title-row">
+            <h2>${this.safe.title}</h2>
             ${
               this.safe.can_operate && this.safe.entities.refresh
                 ? html`<button
@@ -373,9 +310,104 @@ export class PopulifeSafeView extends LitElement {
                 : nothing
             }
           </div>
+          <div class="state">
+            <ha-icon
+              icon=${locked ? "mdi:lock" : reachable ? "mdi:lock-open-variant" : "mdi:lock-question"}
+            ></ha-icon>
+            ${stateLabel}
+          </div>
+          <div class="muted">${this.renderLastOpened()}</div>
+          <div class="chips">${this.renderChips()}</div>
         </div>
+        ${
+          this.safe.can_operate
+            ? html`<populife-hold-button
+                class="action"
+                icon=${locked ? "mdi:lock-open-variant" : "mdi:lock"}
+                label=${locked ? t("unlock") : t("lock")}
+                hint=${locked ? t("hold_to_unlock") : t("tap_to_lock")}
+                ?hold=${locked}
+                ?disabled=${!reachable || moving}
+                ?busy=${this._busy === "lock" || moving}
+                @activate=${() => void this.setLocked(!locked)}
+              ></populife-hold-button>`
+            : nothing
+        }
       </section>
     `;
+  }
+
+  private renderLastOpened() {
+    const t = this.t;
+    const lastUnlock = this.entity("last_unlock")?.state;
+    if (lastUnlock === undefined || Number.isNaN(Date.parse(lastUnlock))) {
+      return html`${t("last_unlock")}: ${t("never")}`;
+    }
+    const by = this.entity("last_unlocked_by")?.state;
+    const method = this.entity("last_unlock_method")?.state;
+    const parts = [relativeTime(new Date(lastUnlock), new Date(), this.language)];
+    if (by && by !== "unknown" && by !== "unavailable") parts.push(by);
+    if (method && method in METHOD_ICONS) {
+      parts.push(method === "app" && by ? t("via_ha") : t(methodKey(method)));
+    }
+    return html`${t("last_unlock")}: ${parts.join(" · ")}`;
+  }
+
+  private renderChips() {
+    const t = this.t;
+    const chips = [];
+    const battery = Number(this.entity("battery")?.state);
+    if (!Number.isNaN(battery)) {
+      const level = batteryLevel(battery);
+      const icon =
+        level === "bad" ? "mdi:battery-alert" : level === "warn" ? "mdi:battery-30" : "mdi:battery";
+      chips.push(
+        html`<span class="chip ${level}"><ha-icon icon=${icon}></ha-icon>${battery}%</span>`,
+      );
+    }
+    const signal = Number(this.entity("signal")?.state);
+    if (!Number.isNaN(signal)) {
+      const quality = signalQuality(signal);
+      chips.push(
+        html`<span class="chip ${quality === "weak" ? "warn" : "neutral"}" title=${`${signal} dBm`}
+          ><ha-icon icon=${quality === "weak" ? "mdi:wifi-strength-1" : "mdi:bluetooth"}></ha-icon
+          >${t(`signal_${quality}`)}</span
+        >`,
+      );
+    }
+    const drift = Number(this.entity("clock_drift")?.state);
+    if (!Number.isNaN(drift)) {
+      const off = Math.abs(drift) >= 60;
+      chips.push(
+        html`<span class="chip ${off ? "warn" : "neutral"}"
+          ><ha-icon icon="mdi:clock-outline"></ha-icon>${
+            off ? t("clock_off", { seconds: Math.round(drift) }) : t("clock_ok")
+          }</span
+        >`,
+      );
+      if (off && this.safe.can_operate && this.safe.entities.sync_clock) {
+        chips.push(
+          html`<button
+            class="chip-button"
+            ?disabled=${this._busy !== null}
+            @click=${() => void this.press("sync_clock")}
+          >
+            <ha-icon icon="mdi:clock-check-outline"></ha-icon>${t("sync_clock")}
+          </button>`,
+        );
+      }
+    }
+    const autoLock = Number(this.entity("auto_lock")?.state);
+    if (!Number.isNaN(autoLock)) {
+      chips.push(
+        html`<span class="chip neutral"
+          ><ha-icon icon="mdi:timer-lock-outline"></ha-icon>${
+            autoLock > 0 ? t("auto_lock_after", { seconds: autoLock }) : t("auto_lock_off")
+          }</span
+        >`,
+      );
+    }
+    return chips;
   }
 
   private renderPasscodes() {
@@ -429,6 +461,7 @@ export class PopulifeSafeView extends LitElement {
                               ? nothing
                               : html`<span class="chip neutral">${t("not_on_safe")}</span>`
                           }
+                          ${this.renderLastUsed(passcode)}
                         </div>
                       </div>
                       <div class="row-actions">
@@ -468,6 +501,15 @@ export class PopulifeSafeView extends LitElement {
         }
       </section>
     `;
+  }
+
+  private renderLastUsed(passcode: Passcode) {
+    const used = lastUsed(passcode.name, this._operations ?? []);
+    return used
+      ? html`<span class="used"
+          >${this.t("used", { when: relativeTime(used, new Date(), this.language) })}</span
+        >`
+      : nothing;
   }
 
   private statusChip(passcode: Passcode, status: ReturnType<typeof passcodeStatus>) {
@@ -535,7 +577,9 @@ export class PopulifeSafeView extends LitElement {
                             op.method === "failed" || op.method === "alarm"
                               ? nothing
                               : html`<div class="small muted">
-                                  ${t(methodKey(op.method))}${op.credential ? ` #${op.credential}` : ""}
+                                  ${t(methodKey(op.method))}${op.credential ? ` #${op.credential}` : ""}${
+                                    op.via === "home_assistant" ? ` · ${t("via_ha")}` : ""
+                                  }
                                 </div>`
                           }
                         </div>
@@ -600,30 +644,12 @@ export class PopulifeSafeView extends LitElement {
       .wide {
         grid-column: 1 / -1;
       }
-      .status {
+      .hero {
         align-items: center;
-        display: grid;
-        gap: 12px 16px;
-        grid-template-areas: "icon main actions" "metrics metrics metrics";
-        grid-template-columns: auto 1fr auto;
-      }
-      .narrow .status {
-        grid-template-areas: "icon main" "actions actions" "metrics metrics";
-        grid-template-columns: auto 1fr;
-      }
-      .lock-icon {
-        align-items: center;
-        background: color-mix(in srgb, var(--state-color) 15%, transparent);
-        border-radius: 50%;
-        color: var(--state-color);
         display: flex;
-        grid-area: icon;
-        height: 64px;
-        justify-content: center;
-        width: 64px;
-      }
-      .lock-icon ha-icon {
-        --mdc-icon-size: 34px;
+        flex-wrap: wrap;
+        gap: 16px 24px;
+        justify-content: space-between;
       }
       .is-locked {
         --state-color: var(--state-lock-locked-color, var(--success-color, #43a047));
@@ -631,47 +657,64 @@ export class PopulifeSafeView extends LitElement {
       .is-open {
         --state-color: var(--state-lock-unlocked-color, var(--error-color, #db4437));
       }
-      .status-main {
+      .is-gone {
+        --state-color: var(--disabled-text-color, var(--secondary-text-color));
+      }
+      .hero-text {
         display: grid;
-        gap: 2px;
-        grid-area: main;
+        flex: 1 1 280px;
+        gap: 6px;
+        min-width: 0;
+      }
+      .title-row {
+        align-items: center;
+        display: flex;
+        gap: 4px;
+        justify-content: space-between;
+      }
+      .title-row h2 {
+        color: var(--secondary-text-color);
+        font-size: 1rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .state {
-        color: var(--state-color);
-        font-size: 1.6rem;
-        font-weight: 500;
-      }
-      .status-actions {
-        grid-area: actions;
-      }
-      .big {
-        font-size: 1.05rem;
-        justify-content: center;
-        min-height: 48px;
-        min-width: 160px;
-        width: 100%;
-      }
-      .metrics {
         align-items: center;
-        border-top: 1px solid var(--divider-color);
+        color: var(--state-color);
+        display: flex;
+        font-size: 2rem;
+        font-weight: 500;
+        gap: 10px;
+      }
+      .state ha-icon {
+        --mdc-icon-size: 34px;
+      }
+      .chips {
+        align-items: center;
         display: flex;
         flex-wrap: wrap;
-        gap: 12px 28px;
-        grid-area: metrics;
-        padding-top: 12px;
+        gap: 6px;
+        margin-top: 4px;
       }
-      .metric {
+      .chips .chip {
         align-items: center;
-        display: flex;
-        gap: 8px;
+        font-size: 0.8rem;
+        padding: 4px 10px;
       }
-      .metric .value {
-        font-weight: 500;
+      .chips ha-icon {
+        --mdc-icon-size: 16px;
       }
-      .metric-actions {
-        display: flex;
-        gap: 8px;
-        margin-left: auto;
+      .chip-button {
+        font-size: 0.8rem;
+        min-height: 28px;
+        padding: 0 10px;
+      }
+      .action {
+        --hold-color: var(--primary-color);
+        margin: 0 auto;
+      }
+      .used {
+        color: var(--secondary-text-color);
       }
       .list {
         display: grid;
@@ -766,14 +809,6 @@ export class PopulifeSafeView extends LitElement {
       }
     `,
   ];
-}
-
-function metric(icon: string, label: string, value: string) {
-  return html`<div class="metric">
-    <ha-icon icon=${icon}></ha-icon>
-    <span class="muted">${label}</span>
-    <span class="value">${value}</span>
-  </div>`;
 }
 
 function errorText(error: unknown): string {

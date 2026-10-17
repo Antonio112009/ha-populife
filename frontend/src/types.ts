@@ -83,4 +83,6 @@ export interface Operation {
   action: string;
   user: string | null;
   credential: string | null;
+  /** "home_assistant" when Home Assistant sent the command (then `user` is who pressed it). */
+  via: string | null;
 }

@@ -8,7 +8,7 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 
 from .access import async_check_access
-from .const import MANUFACTURER
+from .const import AUTOMATION, MANUFACTURER
 from .coordinator import PopulifeCoordinator
 
 
@@ -28,6 +28,19 @@ class PopulifeEntity(PassiveBluetoothCoordinatorEntity[PopulifeCoordinator]):
             model=lock.lockName or None,
             name=lock.lockAlias or lock.lockName or f"Populife {coordinator.address[-5:]}",
         )
+
+    async def async_actor(self) -> str | None:
+        """Return who started the running action: a user's name, or "Automation".
+
+        None when Home Assistant itself acts without a user or an automation behind it.
+        """
+        context = self._context
+        if context is None:
+            return None
+        if context.user_id is not None:
+            user = await self.hass.auth.async_get_user(context.user_id)
+            return user.name if user is not None and user.name else None
+        return AUTOMATION if context.parent_id is not None else None
 
     async def async_check_access(self) -> None:
         """Refuse the running action unless no user, an admin or an allowed user started it."""
